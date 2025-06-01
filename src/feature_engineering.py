@@ -1,12 +1,12 @@
-#!/opt/homebrew/Caskroom/miniconda/base/envs/optimal_station/bin/python
 import geopandas as gpd
 import pandas as pd
 import numpy as np
 import h3
+from h3 import LatLngPoly
 from pathlib import Path
 import rasterio
 from rasterio.features import rasterize
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, Point, MultiPolygon
 
 # Define directories (consistent with data_processing.py)
 BASE_DIR = Path(__file__).resolve().parent.parent # Should point to Optimal_Station_Recommender directory
@@ -38,6 +38,44 @@ def create_h3_grid_for_city(city_boundary_gdf, h3_resolution):
     if city_boundary_gdf.crs.to_string() != "EPSG:4326":
         city_boundary_gdf = city_boundary_gdf.to_crs("EPSG:4326")
 
+    # --- H3 Library Test with H3 4.2.2 Polygon Format ---
+    print("\n--- Testing h3.polygon_to_cells with proper input format for version 4.2.2 ---")
+    # Define a simple rectangle in London
+    coords = [(-0.1, 51.5), (-0.1, 51.6), (0.0, 51.6), (0.0, 51.5), (-0.1, 51.5)]
+    simple_shapely_polygon = Polygon(coords)
+    
+    try:
+        test_resolution = h3_resolution
+        print(f"Attempting h3.polygon_to_cells with formatted input for Polygon: {simple_shapely_polygon.wkt[:100]}..., resolution: {test_resolution}")
+        
+        # For h3 version 4.2.2, we need to convert the Shapely polygon to the expected format:
+        # - Outer ring coordinates as a list of [lat, lng] pairs (note h3 expects [lat, lng] order)
+        # - Optional list of hole coordinates, each as a list of [lat, lng] pairs
+        
+        # Extract exterior coordinates from the Shapely polygon
+        shapely_coords = list(simple_shapely_polygon.exterior.coords)
+        
+        # Convert to the format h3 expects: list of [lat, lng] pairs (note the swap)
+        # We also need to skip the last coordinate as shapely duplicates first/last point
+        h3_polygon = [[y, x] for x, y in shapely_coords[:-1]]
+        
+        # Create a list of holes (empty for this simple test polygon)
+        h3_holes = []
+        
+        print(f"Formatted h3 polygon with {len(h3_polygon)} exterior points and {len(h3_holes)} holes")
+        
+        # Create a LatLngPoly object and call h3.polygon_to_cells
+        h3_poly = LatLngPoly(h3_polygon)
+        test_hexagons = h3.polygon_to_cells(h3_poly, test_resolution)
+        
+        print(f"H3 test SUCCESSFUL. Found {len(test_hexagons)} H3 cells for the polygon.")
+    except Exception as e:
+        print(f"H3 test FAILED with error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    print("--- End H3 Library Test ---\n")
+    # --- End of H3 Library Test ---
+
     # Get the first geometry (assuming it's the main city boundary)
     boundary_polygon = city_boundary_gdf.geometry.iloc[0]
     
@@ -45,14 +83,95 @@ def create_h3_grid_for_city(city_boundary_gdf, h3_resolution):
     all_hexagons = set() # Use a set to store unique hexagon IDs
 
     def polygon_to_h3_cells(poly, h3_resolution):
-        coords = [list(poly.exterior.coords)]
-        if poly.interiors:
-            coords += [list(ring.coords) for ring in poly.interiors]
-        geojson_dict = {
-            "type": "Polygon",
-            "coordinates": coords
-            }
-        return h3.polygon_to_cells(coords, h3_resolution)  # Pass the list of coordinate rings directly
+        # For h3 4.2.2, polygon_to_cells expects a specific format:
+        # - A list of [lat, lng] coordinates for the outer ring
+        # - An optional list of holes, each as a list of [lat, lng] coordinates
+        # - No closing point (i.e., don't repeat the first point at the end)
+        
+        # Ensure the polygon is valid
+        if not poly.is_valid:
+            print(f"Warning: Input polygon is not valid. Attempting to buffer by 0 to fix.")
+            poly = poly.buffer(0)
+            if not poly.is_valid:
+                print(f"Error: Polygon remains invalid after buffer(0). Cannot proceed with H3 conversion.")
+                return set() # Return an empty set for invalid polygons
+        
+        print(f"Converting {poly.geom_type} to h3 format (valid: {poly.is_valid})")
+        
+        # Container for all H3 cells
+        all_hexagons = set()
+        
+        # Handle both Polygon and MultiPolygon types
+        polygons_to_process = []
+        if poly.geom_type == 'Polygon':
+            polygons_to_process = [poly]
+        elif poly.geom_type == 'MultiPolygon':
+            print(f"Processing MultiPolygon with {len(poly.geoms)} parts")
+            polygons_to_process = [p for p in poly.geoms if p.is_valid and p.geom_type == 'Polygon']
+        else:
+            print(f"Warning: Unexpected geometry type: {poly.geom_type}. Skipping.")
+            return set()
+        
+        # Process each polygon
+        for p in polygons_to_process:
+            try:
+                # Get exterior ring coordinates (skipping the closing point)
+                ext_coords = list(p.exterior.coords)[:-1]
+                
+                # Convert to h3's expected format: list of [lat, lng] pairs
+                # Shapely stores as (x,y) = (lng,lat) but h3 needs [lat,lng]
+                h3_polygon_coords = [[y, x] for x, y in ext_coords]
+                
+                # Process holes (interior rings) if any
+                h3_holes = []
+                for interior in p.interiors:
+                    int_coords = list(interior.coords)[:-1]  # Skip closing point
+                    # Convert to h3's [lat, lng] format
+                    h3_hole_coords = [[y, x] for x, y in int_coords]
+                    h3_holes.append(h3_hole_coords)
+                
+                # Call h3.polygon_to_cells with proper format
+                try:
+                    # Create a LatLngPoly object for the exterior and holes
+                    # Only include holes if they have at least 3 points
+                    valid_holes = [hole for hole in h3_holes if len(hole) >= 3]
+                    h3_poly = LatLngPoly(h3_polygon_coords, valid_holes if valid_holes else None)
+                    polygon_cells = h3.polygon_to_cells(h3_poly, h3_resolution)
+                    
+                    # Add cells to our result set
+                    all_hexagons.update(polygon_cells)
+                    print(f"  Added {len(polygon_cells)} H3 cells from polygon")
+                    
+                except Exception as e:
+                    print(f"  Error calling h3.polygon_to_cells: {type(e).__name__}: {e}")
+                    print(f"  Formatted polygon: {len(h3_polygon_coords)} exterior points, {len(h3_holes)} holes")
+                    print(f"  First few points: {h3_polygon_coords[:3]}")
+                    
+                    # If regular conversion fails, fall back to point sampling approach
+                    print("  Falling back to point sampling approach...")
+                    
+                    # Point sampling as fallback
+                    minx, miny, maxx, maxy = p.bounds
+                    step_size = 0.001  # Small step size for decent coverage
+                    sampled_cells = set()
+                    sampled_count = 0
+                    
+                    for x in np.arange(minx, maxx, step_size):
+                        for y in np.arange(miny, maxy, step_size):
+                            point = Point(x, y)
+                            if p.contains(point):
+                                h3_cell = h3.latlng_to_cell(y, x, h3_resolution)  # lat, lng order
+                                sampled_cells.add(h3_cell)
+                                sampled_count += 1
+                    
+                    print(f"  Point sampling found {len(sampled_cells)} cells from {sampled_count} points")
+                    all_hexagons.update(sampled_cells)
+                
+            except Exception as e:
+                print(f"Error processing polygon: {type(e).__name__}: {e}")
+        
+        print(f"Total unique H3 cells found across all polygons: {len(all_hexagons)}")
+        return all_hexagons
 
     if boundary_polygon.geom_type == 'Polygon':
         if boundary_polygon.is_valid and not boundary_polygon.is_empty:
@@ -80,8 +199,10 @@ def create_h3_grid_for_city(city_boundary_gdf, h3_resolution):
     h3_gdf = gpd.GeoDataFrame({
         'h3_index': list(all_hexagons) # Convert set to list for GeoDataFrame
     })
-    # Convert H3 indices to Shapely polygons
-    h3_gdf['geometry'] = h3_gdf['h3_index'].apply(lambda x: Polygon(h3.h3_to_geo_boundary(x, geo_json=True)))
+    # Convert H3 indices to polygons for spatial operations
+    # CRITICAL FIX: H3 returns coordinates as (lat, lng), but Shapely expects (lng, lat)
+    # We need to swap coordinates to create valid polygons
+    h3_gdf['geometry'] = h3_gdf['h3_index'].apply(lambda x: Polygon([(lng, lat) for lat, lng in h3.cell_to_boundary(x)]))
     h3_gdf.set_crs("EPSG:4326", inplace=True)
     
     return h3_gdf
@@ -177,57 +298,47 @@ def aggregate_raster_data_to_grid(grid_gdf, raster_path, band=1, stat_func=np.su
                 aggregated_values.append(0) # Default on error
     return aggregated_values
 
-def count_points_in_polygons(polygons_gdf, points_gdf, count_col_name):
+def count_points_in_polygons(polygons_gdf, points_gdf, count_column_name):
     """
-    Counts the number of points from points_gdf that fall within each polygon of polygons_gdf.
-
-    Args:
-        polygons_gdf (gpd.GeoDataFrame): GeoDataFrame of polygons.
-        points_gdf (gpd.GeoDataFrame): GeoDataFrame of points.
-        count_col_name (str): Name for the new column in polygons_gdf with the counts.
-
-    Returns:
-        gpd.GeoDataFrame: polygons_gdf with an added column for point counts.
-    """
-    if polygons_gdf.empty:
-        return polygons_gdf
-    if points_gdf.empty:
-        polygons_gdf[count_col_name] = 0
-        return polygons_gdf
-
-    # Ensure CRSs match
-    if polygons_gdf.crs != points_gdf.crs:
-        # print(f"Reprojecting points from {points_gdf.crs} to {polygons_gdf.crs} for spatial join.")
-        try:
-            points_gdf = points_gdf.to_crs(polygons_gdf.crs)
-        except Exception as e:
-            print(f"Error reprojecting points for {count_col_name}: {e}. Returning zero counts.")
-            polygons_gdf[count_col_name] = 0
-            return polygons_gdf
-
-    # Perform spatial join
-    # 'sjoin' with 'op=contains' for polygons containing points, or 'op=within' for points within polygons
-    # We want to count points per polygon, so we do a left join from polygons to points
-    joined_gdf = gpd.sjoin(polygons_gdf, points_gdf, how="left", predicate="contains")
-
-    # Group by polygon index and count points
-    # The join will create duplicate polygon rows if multiple points are in one polygon
-    # The index of points_gdf (e.g., 'index_right') can be used for counting
-    counts = joined_gdf.groupby(joined_gdf.index).size()
-    # If a polygon had no points, it might result in a count of 1 due to the left join (with NaN point cols)
-    # or not appear in groupby if there were truly no points. Let's refine:
+    Count the number of points from points_gdf that are within each polygon from polygons_gdf.
     
-    # A more robust way for point counts after left sjoin:
-    # Count non-NA values in a column from the right GeoDataFrame (points_gdf)
-    # Pick a column that should always be present in points_gdf, e.g., its original index if it was reset
-    # Or simply count the occurrences of each polygon's original index in the joined table.
-    # If points_gdf has an 'index_right' after join, this indicates a match.
-    if 'index_right' in joined_gdf.columns: # 'index_right' is the default name for the index of the right GDF
-        counts = joined_gdf.groupby(polygons_gdf.index)['index_right'].count() # Count actual joined points
-    else: # If 'index_right' is not present, implies no points were joined or sjoin had issues
-        counts = pd.Series(0, index=polygons_gdf.index)
-
-    polygons_gdf[count_col_name] = counts.fillna(0).astype(int)
+    Args:
+        polygons_gdf (geopandas.GeoDataFrame): GeoDataFrame containing polygons
+        points_gdf (geopandas.GeoDataFrame): GeoDataFrame containing points
+        count_column_name (str): Name of the column to store the counts
+        
+    Returns:
+        geopandas.GeoDataFrame: polygons_gdf with additional column containing counts
+    """
+    # Initialize count column with zeros
+    polygons_gdf[count_column_name] = 0
+    
+    # Return early if no points to count
+    if points_gdf.empty:
+        return polygons_gdf
+    
+    # Ensure CRS match
+    if polygons_gdf.crs != points_gdf.crs:
+        points_gdf = points_gdf.to_crs(polygons_gdf.crs)
+    
+    try:
+        # Use spatial join with 'within' predicate to find points within polygons
+        # We join polygons (left) to points (right) so we can count points per polygon
+        joined = gpd.sjoin(polygons_gdf, points_gdf, how='left', predicate='contains')
+        
+        # Group by polygon index and count points (non-null index_right values)
+        if 'index_right' in joined.columns:
+            # Count points per polygon (those with non-null index_right)
+            counts = joined.groupby(level=0)['index_right'].count()
+            
+            # Update count column where counts exist
+            for idx, count in counts.items():
+                if idx in polygons_gdf.index:
+                    polygons_gdf.loc[idx, count_column_name] = count
+    
+    except Exception as e:
+        print(f"Error in count_points_in_polygons: {e}")
+    
     return polygons_gdf
 
 def create_features_for_city(city_key, h3_resolution):
@@ -285,18 +396,77 @@ def create_features_for_city(city_key, h3_resolution):
             print(f"Warning: Stations GeoDataFrame for {city_key} has no valid geometries. Target will be all 0.")
             h3_grid_gdf['has_station'] = 0
         else:
-            # Perform a spatial join. H3 cells that contain a station.
-            # A cell 'has_station' if its geometry contains the geometry of any station.
-            # We can use a temporary column to mark joined cells.
-            joined_stations = gpd.sjoin(h3_grid_gdf, stations_gdf, how='left', predicate='contains')
-            # If a h3 cell contains multiple stations, it will be duplicated.
-            # We only care if *any* station is present.
-            # Group by the original h3_grid_gdf index and check if 'index_right' (from stations_gdf) is not NaN.
-            if 'index_right' in joined_stations.columns:
-                station_presence = joined_stations.groupby(h3_grid_gdf.index)['index_right'].notna().any(level=0)
-                h3_grid_gdf['has_station'] = station_presence.astype(int)
+            # Debug print statements to help diagnose station identification issues
+            print(f"  H3 grid CRS: {h3_grid_gdf.crs}")
+            print(f"  Stations CRS: {stations_gdf.crs}")
+            print(f"  Number of stations: {len(stations_gdf)}")
+            print(f"  First station geometry type: {stations_gdf.geometry.iloc[0].geom_type if len(stations_gdf) > 0 else 'N/A'}")
+            
+            # Ensure both dataframes are in the same CRS before joining
+            if h3_grid_gdf.crs != stations_gdf.crs:
+                print(f"  Reprojecting stations from {stations_gdf.crs} to {h3_grid_gdf.crs}")
+                stations_gdf = stations_gdf.to_crs(h3_grid_gdf.crs)
+            
+            # Try a different approach for station identification
+            print("  DEBUG: Looking at sample station and hexagon...")
+            if len(stations_gdf) > 0 and len(h3_grid_gdf) > 0:
+                # Print sample station point and hexagon to investigate spatial relationship
+                sample_station = stations_gdf.iloc[0]
+                sample_hexagon = h3_grid_gdf.iloc[0]
+                print(f"  Sample station: {sample_station.geometry}")
+                print(f"  Sample hexagon: {sample_hexagon.geometry}")
+                
+                # Try different join predicates
+                print("  Attempting spatial join with 'intersects' predicate...")
+                try:
+                    # First try: hexagons contain stations (traditional approach)
+                    joined1 = gpd.sjoin(h3_grid_gdf, stations_gdf, how='inner', predicate='intersects')
+                    print(f"  Method 1: Found {len(joined1)} intersections between hexagons and stations")
+                    print(f"  Method 1: Found {len(joined1['index_right'].unique())} unique stations")
+                    print(f"  Method 1: Found {len(joined1.index.unique())} unique hexagons with stations")
+                    
+                    # Set the target variable based on this join
+                    if len(joined1) > 0:
+                        h3_grid_gdf['has_station'] = 0
+                        h3_grid_gdf.loc[joined1.index.unique(), 'has_station'] = 1
+                        print(f"  Successfully identified {h3_grid_gdf['has_station'].sum()} hexagons with stations")
+                    else:
+                        # If no matches, try a buffer approach
+                        print("  No intersections found, trying with buffered stations...")
+                        # Create a small buffer around stations to ensure intersection
+                        buffered_stations = stations_gdf.copy()
+                        buffer_size = 0.0001  # ~10m buffer in degrees
+                        buffered_stations['geometry'] = buffered_stations.geometry.buffer(buffer_size)
+                        joined_buffer = gpd.sjoin(h3_grid_gdf, buffered_stations, how='inner', predicate='intersects')
+                        print(f"  Buffer method: Found {len(joined_buffer)} intersections")
+                        
+                        if len(joined_buffer) > 0:
+                            h3_grid_gdf['has_station'] = 0
+                            h3_grid_gdf.loc[joined_buffer.index.unique(), 'has_station'] = 1
+                            print(f"  Buffer method identified {h3_grid_gdf['has_station'].sum()} hexagons with stations")
+                        else:
+                            print("  Still no matches with buffer approach")
+                            h3_grid_gdf['has_station'] = 0
+                except Exception as e:
+                    print(f"  Error in spatial join: {e}")
+                    h3_grid_gdf['has_station'] = 0
             else:
-                 h3_grid_gdf['has_station'] = 0
+                print("  Either stations or hexagons dataframe is empty")
+                h3_grid_gdf['has_station'] = 0
+
+            # Note: The spatial join logic is now handled in the code block above
+            # We're keeping this block commented for reference
+            # If needed, we can uncomment and adapt it for additional processing
+            
+            # # If a h3 cell contains multiple stations, it will be duplicated.
+            # # We only care if *any* station is present.
+            # # Group by the original h3_grid_gdf index and check if 'index_right' (from stations_gdf) is not NaN.
+            # if 'index_right' in joined_stations.columns:
+            #     # Call notna() before groupby, not after
+            #     station_presence = joined_stations['index_right'].notna().groupby(joined_stations.index).any()
+            #     h3_grid_gdf['has_station'] = station_presence.astype(int)
+            # else:
+            #      h3_grid_gdf['has_station'] = 0
     else:
         h3_grid_gdf['has_station'] = 0
     
