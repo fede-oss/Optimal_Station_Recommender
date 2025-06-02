@@ -8,3 +8,6 @@ seaborn
 h3
 numpy
 shapely
+graphviz
+folium
+contextily

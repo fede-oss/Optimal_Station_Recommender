@@ -248,54 +248,117 @@ def aggregate_raster_data_to_grid(grid_gdf, raster_path, band=1, stat_func=np.su
         raster_path (str or Path): Path to the raster file.
         band (int): Raster band to process.
         stat_func (function): Function to apply to pixel values (e.g., np.sum, np.mean).
-        nodata_val (float, optional): NoData value from raster. If None, tries to get from raster meta.
+        nodata_val: Value to use for NoData pixels, if None will use raster's nodata value.
 
     Returns:
-        list: A list of aggregated values, corresponding to each geometry in grid_gdf.
+        list: List of aggregated values, one per grid cell.
     """
+    # Debug: Print information about the raster file
+    print(f"\n--- POPULATION RASTER DEBUG ---")
+    print(f"Processing raster file: {raster_path}")
+    print(f"File exists: {Path(raster_path).exists()}")
+    
     aggregated_values = []
-
-    if not Path(raster_path).exists():
-        print(f"Error: Raster file not found: {raster_path}")
-        return [0] * len(grid_gdf) # Return default values
-
-    with rasterio.open(raster_path) as src:
-        if nodata_val is None:
-            nodata_val = src.nodata # Get nodata value from raster if not specified
-        
-        # Ensure grid_gdf is in the same CRS as the raster
-        if grid_gdf.crs != src.crs:
-            print(f"Reprojecting grid from {grid_gdf.crs} to {src.crs} for aggregation.")
-            grid_gdf_reprojected = grid_gdf.to_crs(src.crs)
-        else:
-            grid_gdf_reprojected = grid_gdf.copy()
-
-        for i, geom in enumerate(grid_gdf_reprojected.geometry):
-            try:
-                # Mask (clip) the raster to the geometry
-                out_image, out_transform = rasterio.mask.mask(src, [geom], crop=True, all_touched=True)
+    non_zero_count = 0
+    error_count = 0
+    total_valid_pixels = 0
+    max_value_found = 0
+    
+    try:
+        with rasterio.open(raster_path) as src:
+            print(f"Raster opened successfully")
+            print(f"Raster CRS: {src.crs}")
+            print(f"Raster shape: {src.shape}")
+            print(f"Raster bounds: {src.bounds}")
+            print(f"Raster nodata value: {src.nodata}")
+            print(f"Grid CRS: {grid_gdf.crs}")
+            
+            # Sample some raster values to check if they're non-zero
+            sample_window = ((0, min(10, src.height)), (0, min(10, src.width)))
+            sample_data = src.read(band, window=sample_window)
+            print(f"Sample data from raster (10x10):\n{sample_data}")
+            print(f"Sample stats - min: {sample_data.min()}, max: {sample_data.max()}, mean: {sample_data.mean()}")
+            
+            if nodata_val is None:
+                nodata_val = src.nodata
+                print(f"Using raster nodata value: {nodata_val}")
+            else:
+                print(f"Using provided nodata value: {nodata_val}")
+            
+            # For each grid cell geometry, get the overlapping raster pixels
+            for i in range(len(grid_gdf)):
+                try:
+                    geom = grid_gdf.iloc[i].geometry
+                    
+                    # Skip invalid or empty geometries
+                    if geom is None or geom.is_empty:
+                        aggregated_values.append(0)
+                        continue
+                        
+                    # Identify pixels that intersect the geometry
+                    coords = getattr(geom, "__geo_interface__", None)
+                    if coords is None:
+                        aggregated_values.append(0)
+                        continue
+                        
+                    geom_bounds = geom.bounds
+                    
+                    # Convert bounds from geometry CRS to raster CRS if they differ
+                    if grid_gdf.crs != src.crs:
+                        from pyproj import Transformer  # Import here for clarity
+                        transformer = Transformer.from_crs(grid_gdf.crs, src.crs, always_xy=True)
+                        # Transform each corner separately
+                        minx, miny = transformer.transform(geom_bounds[0], geom_bounds[1])
+                        maxx, maxy = transformer.transform(geom_bounds[2], geom_bounds[3])
+                        geom_bounds = (minx, miny, maxx, maxy)
+                    
+                    # Get raster window for the geometry bounds
+                    window = src.window(*geom_bounds)
+                    # Read raster data in this window
+                    window_data = src.read(band, window=window, boundless=True, masked=True)
+                    
+                    # Filter out nodata values if specified
+                    pixel_values = window_data.flatten()
+                    if nodata_val is not None:
+                        valid_pixels = pixel_values[pixel_values != nodata_val]
+                    else:
+                        valid_pixels = pixel_values[~np.isnan(pixel_values)]
+                    
+                    # Debug sample cells if this is one of the first few
+                    if i < 5:  # Debug first 5 cells
+                        h3_index = grid_gdf.iloc[i]['h3_index'] if 'h3_index' in grid_gdf.columns else f'Cell_{i}'
+                        print(f"Cell {h3_index}: Found {len(valid_pixels)} valid pixels, sum={np.sum(valid_pixels) if valid_pixels.size > 0 else 0}")
+                    
+                    if valid_pixels.size > 0:
+                        value = stat_func(valid_pixels)
+                        aggregated_values.append(value)
+                        if value > 0:
+                            non_zero_count += 1
+                            max_value_found = max(max_value_found, value)
+                        total_valid_pixels += valid_pixels.size
+                    else:
+                        aggregated_values.append(0)  # Default if no valid pixels or empty mask
+                except Exception as e:
+                    error_count += 1
+                    if error_count <= 5:  # Limit error reporting to first 5 errors
+                        h3_index = grid_gdf.iloc[i]['h3_index'] if 'h3_index' in grid_gdf.columns else f'Cell_{i}'
+                        print(f"Error processing cell {h3_index}: {type(e).__name__}: {e}")
+                    aggregated_values.append(0)  # Default on error
+            
+            # Print summary statistics
+            print(f"\nRaster aggregation summary:")
+            print(f"Total cells processed: {len(grid_gdf)}")
+            print(f"Cells with non-zero values: {non_zero_count} ({non_zero_count/len(grid_gdf)*100:.2f}%)")
+            print(f"Total errors encountered: {error_count}")
+            print(f"Total valid pixels found: {total_valid_pixels}")
+            print(f"Maximum aggregated value: {max_value_found}")
+            print(f"Mean of aggregated values: {np.mean(aggregated_values):.4f}")
                 
-                # Extract valid pixel values
-                # The out_image might have multiple bands if the source did, select the specified one
-                # Also, after mask, nodata values might be 0 or a fill value. Check src.meta for fill.
-                # For WorldPop, population counts are usually floats, nodata often negative.
-                pixel_values = out_image[band-1].flatten() # Get the specified band and flatten
-                
-                # Filter out NoData values
-                if nodata_val is not None:
-                    valid_pixels = pixel_values[pixel_values != nodata_val]
-                else:
-                    # If no specific nodata_val, assume all are valid unless they are e.g. NaN
-                    # This might need adjustment based on raster properties
-                    valid_pixels = pixel_values[~np.isnan(pixel_values)] 
-                
-                if valid_pixels.size > 0:
-                    aggregated_values.append(stat_func(valid_pixels))
-                else:
-                    aggregated_values.append(0) # Default if no valid pixels or empty mask
-            except Exception as e:
-                # print(f"Error processing geometry {i} for H3 index {grid_gdf.iloc[i]['h3_index'] if 'h3_index' in grid_gdf.columns else 'N/A'}: {e}")
-                aggregated_values.append(0) # Default on error
+    except Exception as e:
+        print(f"Error in aggregate_raster_data_to_grid: {type(e).__name__}: {e}")
+        # Return zeros if we can't process the raster
+        return [0] * len(grid_gdf)
+    
     return aggregated_values
 
 def count_points_in_polygons(polygons_gdf, points_gdf, count_column_name):
@@ -475,6 +538,11 @@ def create_features_for_city(city_key, h3_resolution):
     cols_to_fill_na = ['population'] + [col for col in h3_grid_gdf.columns if 'count_amenity_' in col]
     for col in cols_to_fill_na:
         if col in h3_grid_gdf.columns:
+            # Ensure columns are numeric before filling NA
+            if col == 'population':
+                h3_grid_gdf[col] = pd.to_numeric(h3_grid_gdf[col], errors='coerce')
+                print(f"Converted population column to numeric. Current dtype: {h3_grid_gdf[col].dtype}")
+                print(f"Population stats after conversion - min: {h3_grid_gdf[col].min()}, max: {h3_grid_gdf[col].max()}, mean: {h3_grid_gdf[col].mean()}")
             h3_grid_gdf[col] = h3_grid_gdf[col].fillna(0)
         else:
             h3_grid_gdf[col] = 0 # If a category had no file, it might not have a column yet
@@ -499,6 +567,9 @@ def create_features_for_city(city_key, h3_resolution):
         except Exception as e2:
             print(f"Error saving features for {city_key} to GeoJSON as well: {e2}")
 
+    # Add city name as a column for filtering later in the pipeline
+    h3_grid_gdf['city'] = city_key.lower()
+    
     return h3_grid_gdf
 
 def run_feature_engineering_pipeline():
@@ -526,6 +597,7 @@ def run_feature_engineering_pipeline():
     for city_key in processed_city_keys:
         city_features_gdf = create_features_for_city(city_key, H3_RESOLUTION)
         if city_features_gdf is not None and not city_features_gdf.empty:
+            # The city column is now added in create_features_for_city function
             all_features_gdfs.append(city_features_gdf)
     
     if all_features_gdfs:
@@ -533,6 +605,13 @@ def run_feature_engineering_pipeline():
         # This is useful for training a single model
         combined_features_gdf = pd.concat(all_features_gdfs, ignore_index=True)
         print(f"\nTotal combined features from {len(all_features_gdfs)} cities: {len(combined_features_gdf)} H3 cells.")
+        
+        # Print city distribution
+        if 'city' in combined_features_gdf.columns:
+            city_counts = combined_features_gdf['city'].value_counts()
+            print("\nDistribution of cells by city:")
+            for city, count in city_counts.items():
+                print(f"  {city.capitalize()}: {count} cells")
         
         # Save combined features
         combined_output_filename = f"all_cities_features_h{H3_RESOLUTION}.gpkg"

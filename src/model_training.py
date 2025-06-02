@@ -5,11 +5,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import joblib
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+import os
+import subprocess
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
+from sklearn.tree import export_graphviz
+import graphviz
 
 # Define directories (consistent with other scripts)
 BASE_DIR = Path(__file__).resolve().parent.parent  # Should point to Optimal_Station_Recommender directory
@@ -53,6 +57,27 @@ def prepare_data_for_training(features_gdf):
     Returns:
         tuple: X_train, X_test, y_train, y_test, feature_names
     """
+    # First, check if the population column is numeric and convert if necessary
+    print("\n--- POPULATION DATA INVESTIGATION ---")
+    print(f"Population column data type before conversion: {features_gdf['population'].dtype}")
+    if features_gdf['population'].dtype == 'object':
+        print("Population column is non-numeric (strings). Converting to numeric values...")
+        features_gdf['population'] = pd.to_numeric(features_gdf['population'], errors='coerce')
+        features_gdf['population'] = features_gdf['population'].fillna(0)
+        print(f"Conversion complete. New data type: {features_gdf['population'].dtype}")
+    
+    # Debug: Print information about population data
+    print(f"Total cells with population data: {features_gdf['population'].notna().sum()} out of {len(features_gdf)}")
+    print(f"Population data statistics:\n{features_gdf['population'].describe()}")
+    print(f"Number of cells with zero population: {(features_gdf['population'] == 0).sum()}")
+    print(f"Percentage of cells with zero population: {(features_gdf['population'] == 0).mean() * 100:.2f}%")
+    
+    # Debug: Compare population for cells with and without stations
+    has_station_pop = features_gdf.loc[features_gdf['has_station'] == 1, 'population']
+    no_station_pop = features_gdf.loc[features_gdf['has_station'] == 0, 'population']
+    print(f"Population in cells WITH stations: mean={has_station_pop.mean():.2f}, median={has_station_pop.median():.2f}")
+    print(f"Population in cells WITHOUT stations: mean={no_station_pop.mean():.2f}, median={no_station_pop.median():.2f}")
+    
     # Check if required columns exist
     required_columns = ['population', 'has_station']
     # Check for at least one amenity column
@@ -114,7 +139,7 @@ def train_model(X_train, y_train, feature_names):
     
     # Define hyperparameter grid
     param_grid = {
-        'classifier__n_estimators': [50, 100, 200],
+        'classifier__n_estimators': [50, 100, 200, 300],
         'classifier__max_depth': [None, 10, 20, 30],
         'classifier__min_samples_split': [2, 5, 10],
         'classifier__min_samples_leaf': [1, 2, 4]
@@ -244,6 +269,102 @@ def save_results(model, feature_importances, metrics, X_test, y_test, y_pred):
     cm_plot_file = RESULTS_DIR / f"confusion_matrix_h{H3_RESOLUTION}.png"
     plt.savefig(cm_plot_file, dpi=300)
     print(f"Confusion matrix plot saved to {cm_plot_file}")
+    
+    # Create a directory for tree visualizations
+    trees_dir = RESULTS_DIR / f"decision_trees_h{H3_RESOLUTION}"
+    trees_dir.mkdir(exist_ok=True)
+    
+    # Visualize a sample of trees from the Random Forest
+    # Get the Random Forest classifier from the pipeline
+    rf_classifier = model.named_steps['classifier']
+    feature_names = X_test.columns
+    
+    # Select a sample of trees to visualize (e.g., first 3 trees)
+    num_trees_to_visualize = min(3, len(rf_classifier.estimators_))
+    print(f"\nVisualizing {num_trees_to_visualize} sample trees from the Random Forest:")
+    
+    def export_tree_to_png(estimator, output_path, feature_names, max_depth=3):
+        """Export a decision tree to PNG format"""
+        # Create a temporary dot file
+        dot_data = export_graphviz(
+            estimator,
+            out_file=None,
+            feature_names=feature_names,
+            class_names=['No Station', 'Has Station'],
+            filled=True,
+            rounded=True,
+            precision=2,
+            max_depth=max_depth
+        )
+        
+        # Convert to PNG using graphviz
+        graph = graphviz.Source(dot_data)
+        graph.format = 'png'
+        graph.render(filename=output_path.stem, directory=str(output_path.parent), cleanup=True)
+        print(f"Tree visualization saved to {output_path}")
+    
+    # Export individual trees
+    for i in range(num_trees_to_visualize):
+        tree_png_file = trees_dir / f"tree_{i}.png"
+        try:
+            export_tree_to_png(
+                rf_classifier.estimators_[i],
+                tree_png_file,
+                feature_names,
+                max_depth=3
+            )
+        except Exception as e:
+            print(f"Error exporting tree {i} to PNG: {e}")
+            # Fallback to DOT file if PNG conversion fails
+            tree_dot_file = trees_dir / f"tree_{i}.dot"
+            export_graphviz(
+                rf_classifier.estimators_[i],
+                out_file=str(tree_dot_file),
+                feature_names=feature_names,
+                class_names=['No Station', 'Has Station'],
+                filled=True,
+                rounded=True,
+                precision=2,
+                max_depth=3
+            )
+            print(f"Fallback: Tree {i} visualization saved as DOT file to {tree_dot_file}")
+    
+    # Also export a tree visualization that includes feature importance information
+    # Get the most important tree (one with highest feature importance for top feature)
+    if len(rf_classifier.estimators_) > 0:
+        top_feature = feature_importances.iloc[0]['Feature']
+        top_feature_idx = list(feature_names).index(top_feature) if top_feature in feature_names else 0
+        
+        # Find tree with highest importance for this feature
+        tree_importances = [tree.feature_importances_[top_feature_idx] 
+                           for tree in rf_classifier.estimators_]
+        best_tree_idx = np.argmax(tree_importances)
+        
+        # Export the most important tree
+        important_tree_png_file = trees_dir / "most_important_tree.png"
+        
+        try:
+            export_tree_to_png(
+                rf_classifier.estimators_[best_tree_idx],
+                important_tree_png_file,
+                feature_names,
+                max_depth=4  # Slightly deeper for the important tree
+            )
+        except Exception as e:
+            print(f"Error exporting most important tree to PNG: {e}")
+            # Fallback to DOT file
+            important_tree_dot_file = trees_dir / "most_important_tree.dot"
+            export_graphviz(
+                rf_classifier.estimators_[best_tree_idx],
+                out_file=str(important_tree_dot_file),
+                feature_names=feature_names,
+                class_names=['No Station', 'Has Station'],
+                filled=True,
+                rounded=True,
+                precision=2,
+                max_depth=4
+            )
+            print(f"Fallback: Most important tree visualization saved as DOT file to {important_tree_dot_file}")
 
 
 def run_model_training_pipeline():
