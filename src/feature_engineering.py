@@ -217,9 +217,14 @@ def load_city_data_for_fe(city_key, raw_dir_path, processed_dir_path):
     data['stations'] = gpd.read_file(raw_dir_path / f"{city_key}_stations.geojson")
     
     data['amenities'] = {}
-    # AMENITY_TAGS_CONFIG is defined in data_processing.py, we might need to redefine or import it
-    # For now, let's assume we know the amenity categories used during data fetching
-    amenity_categories = ["education", "healthcare", "shopping_food", "leisure_recreation", "workplaces", "public_services"]
+    # Import the amenity configuration from data_processing to ensure consistency
+    try:
+        from config import AMENITY_TAGS_CONFIG
+        amenity_categories = list(AMENITY_TAGS_CONFIG.keys())
+    except ImportError:
+        # Fallback to full list if import fails
+        amenity_categories = ["education", "healthcare", "shopping_food", "leisure_recreation", "workplaces", "public_services", "transportation", "accommodation", "entertainment", "religious", "tourism"]
+    
     for cat in amenity_categories:
         amenity_file = raw_dir_path / f"{city_key}_amenities_{cat}.geojson"
         if amenity_file.exists():
@@ -574,23 +579,30 @@ def create_features_for_city(city_key, h3_resolution):
 
 def run_feature_engineering_pipeline():
     """Runs the full feature engineering pipeline for all configured cities."""
-    # CITIES config should be accessible here (e.g. import from data_processing or redefine)
-    # For now, hardcoding the keys we expect were processed based on user output
-    # In a more robust setup, this would come from a shared config or by listing processed data
+    # Import city configuration from data_processing to ensure consistency
+    try:
+        from config import CITIES
+        configured_cities = list(CITIES.keys())
+    except ImportError:
+        # Fallback to detecting cities based on processed population data
+        configured_cities = []
+        for pop_file in DATA_PROCESSED_DIR.glob("*_population_2020_100m.tif"):
+            city_key = pop_file.stem.replace("_population_2020_100m", "")
+            configured_cities.append(city_key)
+    
+    print(f"Detected cities with data: {configured_cities}")
+    
+    # Check which cities have processed population data (required for feature engineering)
     processed_city_keys = []
-    if (DATA_PROCESSED_DIR / "london_population_2020_100m.tif").exists():
-        processed_city_keys.append("london")
-    if (DATA_PROCESSED_DIR / "berlin_population_2020_100m.tif").exists():
-        processed_city_keys.append("berlin")
-    # Add Paris if its population data exists
-    if (DATA_PROCESSED_DIR / "paris_population_2020_100m.tif").exists():
-         processed_city_keys.append("paris")
-    elif Path(DATA_RAW_DIR / WORLDPOP_CONFIG.get("paris", "")).exists(): # Check if raw Paris pop data is there now
-        print("Paris raw population data found. Consider re-running data_processing.py to generate its processed raster.")
-
+    for city_key in configured_cities:
+        pop_file = DATA_PROCESSED_DIR / f"{city_key}_population_2020_100m.tif"
+        if pop_file.exists():
+            processed_city_keys.append(city_key)
+        else:
+            print(f"Warning: No processed population data found for {city_key}. Run data processing first.")
+    
     if not processed_city_keys:
-        print("No cities with processed population data found. Aborting feature engineering.")
-        print(f"Please check {DATA_PROCESSED_DIR} for city-specific population rasters.")
+        print("No cities with processed population data found. Please run data_processing.py first.")
         return
 
     all_features_gdfs = []
