@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Station Suitability Search</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .search-box {
+            margin: 20px 0;
+        }
+        input[type="text"] {
+            padding: 10px;
+            width: 70%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status-processing {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .status-error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .city-list {
+            margin-top: 20px;
+        }
+        .city-list button {
+            margin: 5px;
+            background-color: #007bff;
+        }
+        .city-list button:hover {
+            background-color: #0069d9;
+        }
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Station Suitability Predictor</h1>
+        <p>Enter a city name to predict optimal locations for new public transport stations.</p>
+        
+        <div class="search-box">
+            <input type="text" id="cityInput" placeholder="Enter city name (e.g., London, Tokyo, Singapore)">
+            <button id="searchBtn">Search</button>
+        </div>
+        
+        <div id="status"></div>
+        
+        <div class="city-list">
+            <p>Supported cities:</p>
+            <div id="supportedCities"></div>
+        </div>
+        
+        <iframe id="mapFrame" src="/map"></iframe>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const cityInput = document.getElementById('cityInput');
+            const searchBtn = document.getElementById('searchBtn');
+            const statusDiv = document.getElementById('status');
+            const supportedCitiesDiv = document.getElementById('supportedCities');
+            const mapFrame = document.getElementById('mapFrame');
+            
+            // Load supported cities
+            fetch('/supported_cities')
+                .then(response => response.json())
+                .then(data => {
+                    data.cities.forEach(city => {
+                        const btn = document.createElement('button');
+                        btn.textContent = city.charAt(0).toUpperCase() + city.slice(1);
+                        btn.addEventListener('click', function() {
+                            cityInput.value = this.textContent;
+                            searchCity();
+                        });
+                        supportedCitiesDiv.appendChild(btn);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching supported cities:', error);
+                });
+            
+            // Search city when button is clicked
+            searchBtn.addEventListener('click', searchCity);
+            
+            // Search city when Enter key is pressed
+            cityInput.addEventListener('keypress', function(event) {
+                if (event.key === 'Enter') {
+                    searchCity();
+                }
+            });
+            
+            function searchCity() {
+                const city = cityInput.value.trim();
+                if (!city) {
+                    showStatus('Please enter a city name', 'error');
+                    return;
+                }
+                
+                showStatus('Processing city data. This may take a few minutes...', 'processing');
+                
+                fetch('/predict_city', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ city: city })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showStatus(`Error: ${data.detail}`, 'error');
+                    } else {
+                        showStatus(`Successfully generated predictions for ${city}!`, 'success');
+                        
+                        // Instead of using postMessage, reload the iframe with the city in the URL
+                        // This allows the map to load with the city's data already displayed
+                        mapFrame.src = `/map?city=${encodeURIComponent(city)}`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showStatus('An error occurred while processing your request', 'error');
+                });
+            }
+            
+            function showStatus(message, type) {
+                statusDiv.textContent = message;
+                statusDiv.className = '';
+                statusDiv.classList.add(`status-${type}`);
+                statusDiv.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

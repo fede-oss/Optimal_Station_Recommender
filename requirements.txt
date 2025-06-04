@@ -11,3 +11,6 @@ shapely
 graphviz
 folium
 contextily
+tqdm
+overpy
+requests
