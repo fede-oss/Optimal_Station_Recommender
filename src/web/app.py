@@ -370,14 +370,8 @@ def get_supported_cities():
     })
 
 if __name__ == '__main__':
-    # Create required directories
+    # Ensure the processed data directory exists
     DATA_PROCESSED_DIR.mkdir(exist_ok=True, parents=True)
-    
-    # Make sure the processed data directory exists
-    
-    # Run the app on port 8082 (changed from 8081 to avoid conflicts)
-    app.run(debug=True, port=8082)
-    DATA_PROCESSED_DIR.mkdir(exist_ok=True, parents=True)
-    
-    # Run the app
-    app.run(debug=True, host='0.0.0.0', port=8081)
+
+    # Run the Flask app. 8082 is used to avoid conflicts with other services.
+    app.run(debug=True, host='0.0.0.0', port=8082)
