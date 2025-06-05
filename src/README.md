@@ -10,6 +10,14 @@ src/
 │   ├── __init__.py
 │   ├── config.py    # Main configuration (cities, amenities, paths)
 │   └── ...
+├── data/            # Data processing modules
+│   ├── __init__.py
+│   ├── worldpop_downloader.py    # WorldPop population data downloading
+│   ├── simple_osm_fetcher.py     # Basic OSM data fetching
+│   ├── osm_utils.py              # Advanced OSM utilities (chunking, caching)
+│   ├── population_utils.py       # Population data processing
+│   ├── data_processing.py        # Main data processing pipeline
+│   └── ...
 ├── ml/              # Machine learning modules
 │   ├── __init__.py
 │   ├── feature_engineering.py    # H3 grid generation and feature creation
@@ -21,6 +29,9 @@ src/
 │   ├── app.py                    # Flask backend API
 │   ├── city_search.html          # City search interface
 │   └── static/                   # Static web assets
+└── utils/           # Utility modules
+    ├── __init__.py
+    └── ...
 ```
 
 ## Key Improvements from Refactoring
@@ -56,14 +67,15 @@ python app.py
 ### Running Feature Engineering
 ```bash
 cd src
-python -m ml.feature_engineering
+python -m data.worldpop_downloader --city london
+python -m data.data_processing
 ```
 
 ### Training Models
 ```bash
-cd src
-python -m ml.model_training
-python -m ml.station_ranking
+# Train models and generate rankings
+python src/ml/model_training.py
+python src/ml/station_ranking.py
 ```
 
 ## Import Guidelines
