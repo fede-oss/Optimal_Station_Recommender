@@ -44,31 +44,27 @@ I've enhanced your OSM amenity fetching with several performance optimizations t
 
 ## 🎯 How to Use
 
-### Simple Drop-in Replacement
+### Direct Usage (Recommended)
 
-Your existing code:
+Use the enhanced fetcher directly for optimal performance:
 ```python
-from data.simple_osm_fetcher import run_osm_data_pipeline
+from data.enhanced_osm_fetcher import run_enhanced_osm_pipeline
 
-run_osm_data_pipeline(cities_dict)
-```
+# Configure your cities dictionary
+cities_dict = {"paris": "Paris, France"}
 
-Enhanced version:
-```python
-from data.simple_osm_fetcher import run_osm_data_pipeline
-
-run_osm_data_pipeline(
-    cities_dict,
-    use_enhanced=True,    # Enable optimizations
+# Run with enhanced pipeline
+run_enhanced_osm_pipeline(
+    cities_to_process=list(cities_dict.keys()),
     use_chunking=True,    # Enable spatial chunking
-    chunk_size_km=3       # Chunk size in kilometers
+    chunk_size_km=5       # Default chunk size (auto-adapted by city size)
 )
 ```
 
 ### Advanced Configuration
 
 ```python
-run_osm_data_pipeline(
+run_enhanced_osm_pipeline(
     cities_to_process=cities_dict,
     parallel_cities=False,        # Process cities sequentially
     max_workers_per_city=3,       # Parallel workers per city
@@ -123,8 +119,9 @@ run_osm_data_pipeline(
 4. **`test_enhanced.py`** - Test script for validation
 
 ### Modified Files:
-1. **`src/data/simple_osm_fetcher.py`** - Added progress bars and enhanced mode support
-2. **`requirements.txt`** - Added tqdm, overpy, requests dependencies
+1. **`src/data/enhanced_osm_fetcher.py`** - Main OSM data fetching implementation with optimizations
+2. **`src/data/data_processing.py`** - Updated to use enhanced fetcher directly  
+3. **`requirements.txt`** - Added tqdm, overpy, requests dependencies
 
 ## 🚀 Quick Start
 
@@ -135,19 +132,21 @@ run_osm_data_pipeline(
 
 2. **Test with a small city:**
    ```python
-   from data.simple_osm_fetcher import run_osm_data_pipeline
+   from data.enhanced_osm_fetcher import run_enhanced_osm_pipeline
    
-   test_cities = {"cambridge": "Cambridge, UK"}
-   run_osm_data_pipeline(test_cities, use_enhanced=True)
+   run_enhanced_osm_pipeline(
+       cities_to_process=["cambridge"],
+       use_chunking=True
+   )
    ```
 
 3. **Use with your existing cities:**
    ```python
-   # Just add use_enhanced=True to your existing code
-   run_osm_data_pipeline(
-       your_cities_dict,
-       use_enhanced=True,
-       use_chunking=True
+   # Direct usage with enhanced pipeline
+   run_enhanced_osm_pipeline(
+       cities_to_process=list(your_cities_dict.keys()),
+       use_chunking=True,
+       max_workers_per_city=3
    )
    ```
 

@@ -24,14 +24,20 @@ The web interface for the Optimal Station Recommender is experiencing several is
 
 **Use the command-line interface instead:**
 
-For generating station recommendations and interactive maps, please use the main pipeline scripts in the project root:
+For generating station recommendations and interactive maps, please use the main pipeline scripts:
 
 ```bash
 # Run the main data processing and analysis
-python src/data/data_processing_refactored.py --city london
+python src/data/data_processing.py --city london
 
-# Or use the simplified approach
-python add_new_city.py
+# List available cities
+python src/data/data_processing.py --list-cities
+
+# Add a new city
+python src/data/data_processing.py --add-city KEY "City Name, Country" ISO
+
+# Use the interactive map script (if available)
+./run_interactive_map.sh
 ```
 
 ### Future Work
@@ -54,5 +60,5 @@ To restore the web application functionality, the following would need to be add
 
 ---
 
-**Last Updated**: June 2025  
+**Last Updated**: December 2024  
 **Status**: On Hold - Use CLI tools instead

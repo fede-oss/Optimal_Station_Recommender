@@ -26,10 +26,77 @@ sys.path.insert(0, src_dir)
 
 # Import our modules
 from config.config import CITIES
-from data.simple_osm_fetcher import fetch_city_boundary, fetch_city_stations
+from data.enhanced_osm_fetcher import OSMFetcher
 from data.worldpop_downloader import download_population_data_for_cities, COUNTRY_DATA
 from ml.feature_engineering import create_h3_grid_for_city, create_features_for_city
 from ml.station_ranking import generate_station_rankings
+from config.config import STATION_TAGS, AMENITY_TAGS_CONFIG, DATA_RAW_DIR
+
+# Helper functions for OSM data fetching
+def fetch_city_boundary(city_key, city_name_query):
+    """Fetch and save boundary for a city using enhanced fetcher."""
+    boundary_output_path = DATA_RAW_DIR / f"{city_key}_boundary.geojson"
+    
+    if boundary_output_path.exists():
+        print(f"✅ Boundary data for {city_key} already exists. Skipping.")
+        return
+
+    print(f"🔍 Fetching boundary for {city_name_query}...")
+    
+    fetcher = OSMFetcher(use_progress_bars=False)
+    try:
+        boundary_gdf = fetcher.get_city_boundary(city_name_query)
+        if boundary_gdf is not None and not boundary_gdf.empty:
+            if boundary_gdf.crs is None:
+                boundary_gdf = boundary_gdf.set_crs("EPSG:4326", allow_override=True)
+            elif boundary_gdf.crs.to_string() != "EPSG:4326":
+                boundary_gdf = boundary_gdf.to_crs("EPSG:4326")
+            
+            for col in boundary_gdf.columns:
+                if boundary_gdf[col].apply(lambda x: isinstance(x, list)).any():
+                    boundary_gdf[col] = boundary_gdf[col].astype(str)
+
+            boundary_output_path.parent.mkdir(parents=True, exist_ok=True)
+            boundary_gdf.to_file(boundary_output_path, driver="GeoJSON")
+            print(f"✅ Saved boundary for {city_key} to {boundary_output_path}")
+        else:
+            print(f"❌ No boundary found for {city_key}.")
+    except Exception as e:
+        print(f"❌ Error fetching/saving boundary for {city_key}: {e}")
+
+def fetch_city_stations(city_key, city_name_query):
+    """Fetch and save stations for a city using enhanced fetcher."""
+    output_path = DATA_RAW_DIR / f"{city_key}_stations.geojson"
+    
+    if output_path.exists():
+        print(f"✅ Stations data for {city_key} already exists. Skipping.")
+        return
+
+    print(f"🔍 Fetching stations for {city_name_query}...")
+    
+    fetcher = OSMFetcher(use_progress_bars=False)
+    try:
+        gdf = fetcher.fetch_amenities_smart(city_name_query, STATION_TAGS, prefer_chunking=False)
+        
+        if not gdf.empty:
+            if gdf.crs is None:
+                gdf = gdf.set_crs("EPSG:4326", allow_override=True)
+            elif gdf.crs.to_string() != "EPSG:4326":
+                gdf = gdf.to_crs("EPSG:4326")
+            
+            for col in gdf.columns:
+                if gdf[col].apply(lambda x: isinstance(x, list)).any():
+                    gdf[col] = gdf[col].astype(str)
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            gdf.to_file(output_path, driver="GeoJSON")
+            print(f"✅ Saved {len(gdf)} stations for {city_key} to {output_path}")
+        else:
+            print(f"⚠️ No stations found for {city_key}")
+            empty_gdf = gpd.GeoDataFrame()
+            empty_gdf.to_file(output_path, driver="GeoJSON")
+    except Exception as e:
+        print(f"❌ Error fetching stations for {city_key}: {e}")
 
 # Initialize Flask app
 app = Flask(__name__, static_folder=None, template_folder='.')
