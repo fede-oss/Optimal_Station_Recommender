@@ -20,7 +20,6 @@ CITIES = {
     "paris": "Paris, France",
     "berlin": "Berlin, Germany",
     # Additional cities with excellent public transport
-    "tokyo": "Tokyo, Japan",
     "singapore": "Singapore",
     "hong_kong": "Hong Kong",
     "seoul": "Seoul, South Korea",
@@ -33,11 +32,8 @@ CITIES = {
     "sao_paulo": "São Paulo, Brazil",
     "buenos_aires": "Buenos Aires, Argentina",
     "lima": "Lima, Peru",
-    "santiago": "Santiago, Chile",
     # European cities
-    "lisbon": "Lisbon, Portugal",
     "stockholm": "Stockholm, Sweden",
-    "copenhagen": "Copenhagen, Denmark",
     "rome": "Rome, Italy",
     "warsaw": "Warsaw, Poland",
     # Oceania cities
@@ -92,7 +88,6 @@ WORLDPOP_CONFIG = {
     "london": "gbr_ppp_2020_100m_unconstrained.tif",
     "paris": "fra_ppp_2020_100m_unconstrained.tif",
     "berlin": "deu_ppp_2020_100m_unconstrained.tif",
-    "tokyo": "jpn_ppp_2020_100m_unconstrained.tif",
     "singapore": "sgp_ppp_2020_100m_unconstrained.tif",
     "hong_kong": "hkg_ppp_2020_100m_unconstrained.tif",
     "seoul": "kor_ppp_2020_100m_unconstrained.tif",
@@ -103,10 +98,7 @@ WORLDPOP_CONFIG = {
     "sao_paulo": "bra_ppp_2020_100m_unconstrained.tif",
     "buenos_aires": "arg_ppp_2020_100m_unconstrained.tif",
     "lima": "per_ppp_2020_100m_unconstrained.tif",
-    "santiago": "chl_ppp_2020_100m_unconstrained.tif",
-    "lisbon": "prt_ppp_2020_100m_unconstrained.tif",
     "stockholm": "swe_ppp_2020_100m_unconstrained.tif",
-    "copenhagen": "dnk_ppp_2020_100m_unconstrained.tif",
     "rome": "ita_ppp_2020_100m_unconstrained.tif",
     "warsaw": "pol_ppp_2020_100m_unconstrained.tif",
     "sydney": "aus_ppp_2020_100m_unconstrained.tif"

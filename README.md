@@ -28,10 +28,10 @@ The pipeline uses WorldPop population data. To download data for cities:
 python src/worldpop_downloader.py
 
 # Download for a specific city
-python src/worldpop_downloader.py --city tokyo
+python src/data/worldpop_downloader.py --city madrid
 
 # Add new city to downloader and download immediately
-python src/worldpop_downloader.py --add-city vancouver CAN
+python src/data/worldpop_downloader.py --add-city vancouver CAN
 
 # List cities and their download status
 python src/worldpop_downloader.py --list
@@ -57,10 +57,23 @@ python src/worldpop_downloader.py --list
 ### Supported Cities
 
 The pipeline currently supports:
-- Tokyo, Japan
 - London, UK  
+- Paris, France
+- Berlin, Germany
+- Madrid, Spain
 - New York, USA
-- Paris, France (example)
+- Singapore
+- Hong Kong
+- Seoul, South Korea
+- Toronto, Canada
+- Mexico City, Mexico
+- São Paulo, Brazil
+- Buenos Aires, Argentina
+- Lima, Peru
+- Stockholm, Sweden
+- Rome, Italy
+- Warsaw, Poland
+- Sydney, Australia
 
 ### Adding New Cities
 
@@ -87,13 +100,13 @@ The pipeline currently supports:
 python src/worldpop_downloader.py --no-chunked
 
 # Adjust number of download threads
-python src/worldpop_downloader.py --workers 8
+python src/data/worldpop_downloader.py --workers 8
 
 # Set maximum retry attempts
-python src/worldpop_downloader.py --max-retries 5
+python src/data/worldpop_downloader.py --max-retries 5
 
 # Verbose output with all attempted URLs
-python src/worldpop_downloader.py --verbose
+python src/data/worldpop_downloader.py --verbose
 ```
 
 ### Data Processing Options
@@ -103,7 +116,7 @@ python src/worldpop_downloader.py --verbose
 python src/data_processing.py
 
 # Process specific city with custom parameters
-python src/data_processing.py --city tokyo --year 2020
+python src/data/data_processing.py --city madrid
 
 # Batch processing for multiple cities
 python src/data_processing.py --batch
@@ -125,8 +138,12 @@ python src/data_processing.py --batch
 ```
 Optimal_Station_Recommender/
 ├── src/
-│   ├── data_processing.py      # Main pipeline with city management
-│   ├── worldpop_downloader.py  # Population data downloader
+│   ├── data/
+│   │   ├── data_processing.py      # Main pipeline with city management
+│   │   ├── worldpop_downloader.py  # Population data downloader
+│   │   └── ...
+│   ├── config/
+│   │   └── config.py              # Configuration settings
 │   └── ...
 ├── data/
 │   ├── raw/                    # Downloaded population datasets
