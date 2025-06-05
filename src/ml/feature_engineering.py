@@ -219,7 +219,7 @@ def load_city_data_for_fe(city_key, raw_dir_path, processed_dir_path):
     data['amenities'] = {}
     # Import the amenity configuration from data_processing to ensure consistency
     try:
-        from config import AMENITY_TAGS_CONFIG
+        from config.config import AMENITY_TAGS_CONFIG
         amenity_categories = list(AMENITY_TAGS_CONFIG.keys())
     except ImportError:
         # Fallback to full list if import fails
@@ -581,7 +581,7 @@ def run_feature_engineering_pipeline():
     """Runs the full feature engineering pipeline for all configured cities."""
     # Import city configuration from data_processing to ensure consistency
     try:
-        from config import CITIES
+        from config.config import CITIES
         configured_cities = list(CITIES.keys())
     except ImportError:
         # Fallback to detecting cities based on processed population data
