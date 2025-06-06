@@ -46,9 +46,53 @@ HEATMAPS_DIR = RANKING_DIR / "heatmaps"
 RANKING_DIR.mkdir(exist_ok=True, parents=True)
 HEATMAPS_DIR.mkdir(exist_ok=True, parents=True)
 
-def load_data_and_model(h3_resolution):
+def load_data_and_model(model_path=None, h3_resolution=9):
     """
     Load the features data and the trained model.
+    
+    Parameters:
+    -----------
+    model_path : str or Path, optional
+        Specific model path to load. If None, uses the most recent balanced_rf model
+    h3_resolution : int
+        H3 resolution used for the grid
+        
+    Returns:
+    --------
+    tuple
+        (features_gdf, model, feature_columns, model_name) - GeoDataFrame with features, trained model, feature columns, and model name
+    """
+    # Load feature data
+    features_path = PROCESSED_DATA_DIR / f"all_cities_features_h{h3_resolution}.gpkg"
+    print(f"Loading feature data from {features_path}")
+    features_gdf = gpd.read_file(features_path)
+    
+    # Load trained model
+    if model_path is None:
+        # Use the most recent balanced_rf model by default
+        model_files = list(MODELS_DIR.glob(f"balanced_rf_h{h3_resolution}_*.joblib"))
+        if model_files:
+            model_path = max(model_files, key=lambda p: p.stat().st_mtime)
+        else:
+            model_path = MODELS_DIR / f"station_recommender_h{h3_resolution}.joblib"
+    else:
+        model_path = Path(model_path)
+    
+    print(f"Loading trained model from {model_path}")
+    model = load(model_path)
+    
+    # Extract model name from filename (without extension)
+    model_name = model_path.stem
+    
+    # Define feature columns (excluding non-feature columns)
+    feature_columns = [col for col in features_gdf.columns 
+                      if col not in ['geometry', 'hex_id', 'city', 'lat', 'lng']]
+    
+    return features_gdf, model, feature_columns, model_name
+
+def get_all_available_models(h3_resolution):
+    """
+    Get all available models for the given H3 resolution.
     
     Parameters:
     -----------
@@ -57,20 +101,26 @@ def load_data_and_model(h3_resolution):
         
     Returns:
     --------
-    tuple
-        (features_gdf, model) - GeoDataFrame with features and trained model
+    list
+        List of model file paths
     """
-    # Load feature data
-    features_path = PROCESSED_DATA_DIR / f"all_cities_features_h{h3_resolution}.gpkg"
-    print(f"Loading feature data from {features_path}")
-    features_gdf = gpd.read_file(features_path)
+    model_files = []
     
-    # Load trained model
-    model_path = MODELS_DIR / f"station_recommender_h{h3_resolution}.joblib"
-    print(f"Loading trained model from {model_path}")
-    model = load(model_path)
+    # Look for all model patterns
+    patterns = [
+        f"balanced_rf_h{h3_resolution}_*.joblib",
+        f"station_recommender_h{h3_resolution}_*.joblib",
+        f"station_recommender_h{h3_resolution}.joblib"
+    ]
     
-    return features_gdf, model
+    for pattern in patterns:
+        model_files.extend(MODELS_DIR.glob(pattern))
+    
+    # Remove duplicates and sort by modification time (newest first)
+    model_files = list(set(model_files))
+    model_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    return model_files
 
 def prepare_data_for_ranking(features_gdf):
     """
@@ -108,7 +158,7 @@ def prepare_data_for_ranking(features_gdf):
     
     return X, feature_columns
 
-def generate_station_rankings(features_gdf, model, feature_columns, h3_resolution):
+def generate_station_rankings(features_gdf, model, feature_columns, h3_resolution, model_name, model_dir):
     """
     Generate rankings for potential station locations based on model probabilities.
     
@@ -122,13 +172,17 @@ def generate_station_rankings(features_gdf, model, feature_columns, h3_resolutio
         List of feature column names
     h3_resolution : int
         H3 resolution used for the grid
+    model_name : str
+        Name of the model for file naming
+    model_dir : Path
+        Directory to save model-specific results
         
     Returns:
     --------
     GeoDataFrame
         GeoDataFrame with station probability scores and rankings
     """
-    print("Generating station rankings...")
+    print(f"Generating station rankings for {model_name}...")
     
     # Create a copy of the features GeoDataFrame
     ranked_gdf = features_gdf.copy()
@@ -151,19 +205,23 @@ def generate_station_rankings(features_gdf, model, feature_columns, h3_resolutio
     # Calculate percentile ranks (0-100 scale, 100 is best)
     ranked_gdf['percentile_rank'] = 100 - (ranked_gdf['station_rank'] / len(ranked_gdf) * 100)
     
-    # Save ranked GeoDataFrame
-    output_path = RANKING_DIR / f"station_rankings_h{h3_resolution}.gpkg"
+    # Create station_rankings subfolder
+    rankings_dir = model_dir / "station_rankings"
+    rankings_dir.mkdir(exist_ok=True)
+    
+    # Save ranked GeoDataFrame in station_rankings subfolder
+    output_path = rankings_dir / f"station_rankings_h{h3_resolution}_{model_name}.gpkg"
     ranked_gdf.to_file(output_path, driver="GPKG")
     print(f"Station rankings saved to {output_path}")
     
     # Also save a CSV version for easier analysis
-    csv_path = RANKING_DIR / f"station_rankings_h{h3_resolution}.csv"
+    csv_path = rankings_dir / f"station_rankings_h{h3_resolution}_{model_name}.csv"
     ranked_gdf.drop('geometry', axis=1).to_csv(csv_path, index=False)
     print(f"Station rankings CSV saved to {csv_path}")
     
     return ranked_gdf
 
-def create_static_heatmap(ranked_gdf, h3_resolution, city=None):
+def create_static_heatmap(ranked_gdf, h3_resolution, model_name, model_dir, city=None):
     """
     Create a static heatmap of station probability scores.
     
@@ -173,10 +231,14 @@ def create_static_heatmap(ranked_gdf, h3_resolution, city=None):
         GeoDataFrame with station probability scores
     h3_resolution : int
         H3 resolution used for the grid
+    model_name : str
+        Name of the model for file naming
+    model_dir : Path
+        Directory to save model-specific results
     city : str, optional
         City name to filter data (if None, use all cities)
     """
-    print(f"Creating static heatmap{'s' if city is None else f' for {city}'}")
+    print(f"Creating static heatmap for {model_name}{'' if city is None else f' - {city}'}")
     
     # Filter by city if specified
     if city is not None and 'city' in ranked_gdf.columns:
@@ -187,8 +249,15 @@ def create_static_heatmap(ranked_gdf, h3_resolution, city=None):
     else:
         city_gdf = ranked_gdf
     
+    # For global heatmap (all cities), create a map showing top locations only
+    # to avoid the issue of spanning continents
+    if city is None:
+        print(f"Creating global overview with top 1000 highest-scoring locations...")
+        # Get top 1000 locations globally for better visualization
+        city_gdf = city_gdf.sort_values('station_probability', ascending=False).head(1000)
+    
     # Create figure
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(15, 10))
     
     # Plot hexagons colored by probability
     city_gdf.plot(
@@ -196,38 +265,49 @@ def create_static_heatmap(ranked_gdf, h3_resolution, city=None):
         ax=ax,
         cmap='YlOrRd',
         legend=True,
-        alpha=0.7,
-        legend_kwds={'label': 'Station Suitability Score', 'orientation': 'horizontal'}
+        alpha=0.8,
+        legend_kwds={'label': 'Station Suitability Score', 'orientation': 'horizontal'},
+        markersize=50 if city is None else None  # Larger markers for global view
     )
     
-    # Add basemap
-    try:
-        ctx.add_basemap(ax, crs=city_gdf.crs.to_string())
-    except Exception as e:
-        print(f"Could not add basemap: {e}")
+    # Add basemap (skip for global view to avoid projection issues)
+    if city is not None:
+        try:
+            ctx.add_basemap(ax, crs=city_gdf.crs.to_string())
+        except Exception as e:
+            print(f"Could not add basemap: {e}")
     
     # Add title and labels
-    title = f"Station Suitability Heatmap"
+    title = f"Station Suitability Heatmap - {model_name}"
     if city is not None:
         title += f" - {city.capitalize()}"
-    ax.set_title(title, fontsize=16)
+    else:
+        title += " - Global Top 1000 Locations"
+    ax.set_title(title, fontsize=16, pad=20)
     
-    # Save figure
-    filename = f"station_heatmap_h{h3_resolution}"
+    # Set axis labels
+    ax.set_xlabel('Longitude', fontsize=12)
+    ax.set_ylabel('Latitude', fontsize=12)
+    
+    # Create heatmaps subfolder if it doesn't exist
+    heatmaps_dir = model_dir / "heatmaps"
+    heatmaps_dir.mkdir(exist_ok=True)
+    
+    # Save figure - ALWAYS put in heatmaps subfolder for consistency
+    filename = f"station_heatmap_h{h3_resolution}_{model_name}"
     if city is not None:
         filename += f"_{city.lower()}"
-        # Save city heatmaps in dedicated folder
-        output_path = HEATMAPS_DIR / f"{filename}.png"
     else:
-        # Save combined heatmap in main rankings folder
-        output_path = RANKING_DIR / f"{filename}.png"
+        filename += "_global"
+    
+    output_path = heatmaps_dir / f"{filename}.png"
     
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Heatmap saved to {output_path}")
     plt.close()
 
-def create_interactive_map(ranked_gdf, h3_resolution, city=None):
+def create_interactive_map(ranked_gdf, h3_resolution, model_name, model_dir, city=None):
     """
     Create an interactive folium map with station probability heatmap.
     
@@ -237,10 +317,14 @@ def create_interactive_map(ranked_gdf, h3_resolution, city=None):
         GeoDataFrame with station probability scores
     h3_resolution : int
         H3 resolution used for the grid
+    model_name : str
+        Name of the model for file naming
+    model_dir : Path
+        Directory to save model-specific results
     city : str, optional
         City name to filter data (if None, use all cities)
     """
-    print(f"Creating interactive map{'s' if city is None else f' for {city}'}")
+    print(f"Creating interactive map for {model_name}{'s' if city is None else f' - {city}'}")
     
     # Filter by city if specified
     if city is not None and 'city' in ranked_gdf.columns:
@@ -400,28 +484,33 @@ def create_interactive_map(ranked_gdf, h3_resolution, city=None):
     # Add a title
     title_html = '''
     <div style="position: fixed; 
-                top: 10px; left: 50px; width: 400px; height: 45px; 
+                top: 10px; left: 50px; width: 450px; height: 65px; 
                 background-color: white; border-radius: 5px; padding: 10px; 
                 z-index: 9999; font-size: 16px; font-weight: bold;">
-        Station Suitability Map {}
+        Station Suitability Map - {} {}
         <div style="font-size: 12px; font-weight: normal;">
+            Model: {}<br>
             Toggle layers using the control in the top-right corner
         </div>
     </div>
-    '''.format(f'for {city.capitalize()}' if city else '')
+    '''.format(f'{city.capitalize()}' if city else 'All Cities', '', model_name)
     m.get_root().html.add_child(folium.Element(title_html))
     
+    # Create interactive_maps subfolder if it doesn't exist
+    interactive_dir = model_dir / "interactive_maps"
+    interactive_dir.mkdir(exist_ok=True)
+    
     # Save map
-    filename = f"interactive_station_map_h{h3_resolution}"
+    filename = f"interactive_station_map_h{h3_resolution}_{model_name}"
     if city is not None:
         filename += f"_{city.lower()}"
-    output_path = RANKING_DIR / f"{filename}.html"
+    output_path = interactive_dir / f"{filename}.html"
     m.save(output_path)
     print(f"Interactive map saved to {output_path}")
     
     return output_path
 
-def export_top_stations(ranked_gdf, top_n=100, h3_resolution=9, city=None):
+def export_top_stations(ranked_gdf, top_n, h3_resolution, model_name, model_dir, city=None):
     """
     Export the top N potential station locations in GeoJSON format.
     
@@ -433,10 +522,14 @@ def export_top_stations(ranked_gdf, top_n=100, h3_resolution=9, city=None):
         Number of top-ranked stations to export
     h3_resolution : int
         H3 resolution used for the grid
+    model_name : str
+        Name of the model for file naming
+    model_dir : Path
+        Directory to save model-specific results
     city : str, optional
         City name to filter data (if None, use all cities)
     """
-    print(f"Exporting top {top_n} potential station locations")
+    print(f"Exporting top {top_n} potential station locations for {model_name}")
     
     # Filter by city if specified
     if city is not None and 'city' in ranked_gdf.columns:
@@ -466,73 +559,242 @@ def export_top_stations(ranked_gdf, top_n=100, h3_resolution=9, city=None):
         crs='EPSG:4326'
     )
     
-    # Save as GeoJSON
-    filename = f"top_{top_n}_stations_h{h3_resolution}"
+    # Create station_rankings subfolder if it doesn't exist
+    rankings_dir = model_dir / "station_rankings"
+    rankings_dir.mkdir(exist_ok=True)
+    
+    # Save as GeoJSON in station_rankings folder
+    filename = f"top_{top_n}_stations_h{h3_resolution}_{model_name}"
     if city is not None:
         filename += f"_{city.lower()}"
     
     # Save hexagons
-    hex_output_path = RANKING_DIR / f"{filename}_hexagons.geojson"
+    hex_output_path = rankings_dir / f"{filename}_hexagons.geojson"
     top_stations.drop('center_point', axis=1).to_file(hex_output_path, driver='GeoJSON')
     print(f"Top station hexagons saved to {hex_output_path}")
     
     # Save center points
-    points_output_path = RANKING_DIR / f"{filename}_points.geojson"
+    points_output_path = rankings_dir / f"{filename}_points.geojson"
     center_points_gdf.to_file(points_output_path, driver='GeoJSON')
     print(f"Top station points saved to {points_output_path}")
 
-def run_ranking_pipeline(h3_resolution=9):
+def run_model_comparison_pipeline(h3_resolution=9):
     """
-    Run the complete station ranking pipeline.
+    Run the complete station ranking pipeline for all available models.
     
     Parameters:
     -----------
     h3_resolution : int
         H3 resolution used for the grid
     """
-    print("=== Starting Station Ranking Pipeline ===")
+    print("🚀 MULTI-MODEL STATION RANKING COMPARISON PIPELINE")
+    print("=" * 60)
     
-    # Load data and model
-    features_gdf, model = load_data_and_model(h3_resolution)
+    # Get all available models
+    model_files = get_all_available_models(h3_resolution)
     
-    # Prepare data for ranking
+    if not model_files:
+        print(f"❌ No models found for H3 resolution {h3_resolution}")
+        return
+    
+    print(f"📊 Found {len(model_files)} models to compare:")
+    for i, model_file in enumerate(model_files, 1):
+        print(f"  {i}. {model_file.name}")
+    
+    # Load feature data once (same for all models)
+    print(f"\n📊 Loading feature data...")
+    features_path = PROCESSED_DATA_DIR / f"all_cities_features_h{h3_resolution}.gpkg"
+    features_gdf = gpd.read_file(features_path)
     X, feature_columns = prepare_data_for_ranking(features_gdf)
     
-    # Generate station rankings
-    ranked_gdf = generate_station_rankings(features_gdf, model, feature_columns, h3_resolution)
+    # Get unique cities for individual analysis
+    cities = features_gdf['city'].unique() if 'city' in features_gdf.columns else []
+    print(f"📍 Found {len(cities)} cities: {', '.join(cities)}")
     
-    # Create visualizations
-    print("\n=== Creating Visualizations ===")
+    model_results = {}
     
-    # Create static heatmaps for all data
-    create_static_heatmap(ranked_gdf, h3_resolution)
+    # Process each model
+    for model_file in model_files:
+        model_name = model_file.stem
+        print(f"\n{'='*60}")
+        print(f"🤖 PROCESSING MODEL: {model_name}")
+        print(f"{'='*60}")
+        
+        # Create model-specific directory structure
+        model_dir = RANKING_DIR / model_name
+        model_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Create required subfolders for organization
+        heatmaps_dir = model_dir / "heatmaps"
+        interactive_dir = model_dir / "interactive_maps" 
+        rankings_dir = model_dir / "station_rankings"
+        
+        heatmaps_dir.mkdir(exist_ok=True)
+        interactive_dir.mkdir(exist_ok=True)
+        rankings_dir.mkdir(exist_ok=True)
+        
+        print(f"📁 Created folder structure: {model_dir.name}/{{heatmaps,interactive_maps,station_rankings}}")
+        
+        try:
+            # Load model
+            print(f"Loading model from {model_file}")
+            model = load(model_file)
+            
+            # Get model's expected features
+            try:
+                # Try to predict with current features to detect feature mismatch
+                test_prediction = model.predict_proba(X.head(1))
+                model_feature_columns = feature_columns
+                print(f"✅ Model compatible with {len(model_feature_columns)} features")
+            except Exception as feature_error:
+                print(f"⚠️ Feature mismatch detected: {feature_error}")
+                
+                # Try to determine model's expected features by inspecting the model
+                # For now, create a reduced feature set by excluding problematic features
+                if "feature names should match" in str(feature_error).lower():
+                    print("🔧 Attempting to fix feature mismatch...")
+                    
+                    # Common problematic features that might not exist in older models
+                    problematic_features = [
+                        'count_amenity_accommodation',
+                        'count_amenity_entertainment', 
+                        'count_amenity_religious',
+                        'count_amenity_tourism',
+                        'count_amenity_transportation'
+                    ]
+                    
+                    # Create reduced feature set
+                    reduced_feature_columns = [col for col in feature_columns 
+                                             if col not in problematic_features]
+                    
+                    print(f"🔄 Trying with {len(reduced_feature_columns)} features (removed {len(feature_columns) - len(reduced_feature_columns)} problematic features)")
+                    
+                    # Test with reduced features
+                    X_reduced = features_gdf[reduced_feature_columns]
+                    test_prediction = model.predict_proba(X_reduced.head(1))
+                    model_feature_columns = reduced_feature_columns
+                    print(f"✅ Model now compatible with reduced feature set")
+                else:
+                    raise feature_error
+            
+            # Generate rankings with appropriate feature set
+            X_model = features_gdf[model_feature_columns]
+            
+            # Create a copy for ranking
+            ranking_features_gdf = features_gdf.copy()
+            
+            # Generate probability scores
+            probabilities = model.predict_proba(X_model)[:, 1]
+            
+            # Add probability scores to GeoDataFrame
+            ranking_features_gdf['station_probability'] = probabilities
+            ranking_features_gdf['station_rank'] = ranking_features_gdf['station_probability'].rank(ascending=False, method='min')
+            ranking_features_gdf = ranking_features_gdf.sort_values('station_probability', ascending=False)
+            ranking_features_gdf['percentile_rank'] = 100 - (ranking_features_gdf['station_rank'] / len(ranking_features_gdf) * 100)
+            
+            # Save rankings in station_rankings folder
+            rankings_output_path = rankings_dir / f"station_rankings_h{h3_resolution}_{model_name}.gpkg"
+            ranking_features_gdf.to_file(rankings_output_path, driver="GPKG")
+            print(f"Station rankings saved to {rankings_output_path}")
+            
+            rankings_csv_path = rankings_dir / f"station_rankings_h{h3_resolution}_{model_name}.csv"
+            ranking_features_gdf.drop('geometry', axis=1).to_csv(rankings_csv_path, index=False)
+            print(f"Station rankings CSV saved to {rankings_csv_path}")
+            
+            ranked_gdf = ranking_features_gdf
+            
+            # Store results for comparison
+            model_results[model_name] = {
+                'model': model,
+                'ranked_gdf': ranked_gdf,
+                'model_dir': model_dir,
+                'top_score': ranked_gdf['station_probability'].max(),
+                'mean_score': ranked_gdf['station_probability'].mean(),
+                'std_score': ranked_gdf['station_probability'].std(),
+                'features_used': len(model_feature_columns)
+            }
+            
+            print(f"\n📊 Model Statistics:")
+            print(f"  🎯 Max Probability: {model_results[model_name]['top_score']:.4f}")
+            print(f"  📈 Mean Probability: {model_results[model_name]['mean_score']:.4f}")
+            print(f"  📊 Std Probability: {model_results[model_name]['std_score']:.4f}")
+            print(f"  🔧 Features Used: {model_results[model_name]['features_used']}")
+            
+            # Create visualizations
+            print(f"\n🎨 Creating visualizations for {model_name}...")
+            
+            # Create static heatmaps for all data (global)
+            create_static_heatmap(ranked_gdf, h3_resolution, model_name, model_dir)
+            
+            # Create static heatmaps for each city
+            print(f"🏙️  Creating individual city heatmaps...")
+            for city in cities:
+                create_static_heatmap(ranked_gdf, h3_resolution, model_name, model_dir, city)
+            
+            # Create interactive maps for all data (global)
+            create_interactive_map(ranked_gdf, h3_resolution, model_name, model_dir)
+            
+            # Create interactive maps for each city
+            print(f"🗺️  Creating individual city interactive maps...")
+            for city in cities:
+                create_interactive_map(ranked_gdf, h3_resolution, model_name, model_dir, city)
+            
+            # Export top stations
+            print(f"💾 Exporting top station locations...")
+            export_top_stations(ranked_gdf, 100, h3_resolution, model_name, model_dir)
+            
+            # Export top stations per city
+            for city in cities:
+                export_top_stations(ranked_gdf, 50, h3_resolution, model_name, model_dir, city)
+            
+            print(f"✅ Model {model_name} processing complete!")
+            print(f"📁 Results saved to: {model_dir}")
+            
+        except Exception as e:
+            print(f"❌ Error processing model {model_name}: {e}")
+            print(f"📁 Folder structure still created at: {model_dir}")
+            continue
     
-    # Create static heatmaps for each city if city info is available
-    if 'city' in ranked_gdf.columns:
-        print("\n=== Creating Individual City Heatmaps ===")
-        for city in ranked_gdf['city'].unique():
-            create_static_heatmap(ranked_gdf, h3_resolution, city)
+    # Create comparison summary
+    print(f"\n{'='*60}")
+    print("📊 MODEL COMPARISON SUMMARY")
+    print(f"{'='*60}")
     
-    # Create interactive maps for all data
-    create_interactive_map(ranked_gdf, h3_resolution)
+    comparison_data = []
+    for model_name, results in model_results.items():
+        comparison_data.append({
+            'Model': model_name,
+            'Max_Probability': results['top_score'],
+            'Mean_Probability': results['mean_score'],
+            'Std_Probability': results['std_score'],
+            'Features_Used': results['features_used'],
+            'Results_Directory': str(results['model_dir'])
+        })
     
-    # Create interactive maps for each city if city info is available
-    if 'city' in ranked_gdf.columns:
-        for city in ranked_gdf['city'].unique():
-            create_interactive_map(ranked_gdf, h3_resolution, city)
+    # Sort by max probability
+    comparison_data.sort(key=lambda x: x['Max_Probability'], reverse=True)
     
-    # Export top stations
-    print("\n=== Exporting Top Station Locations ===")
-    export_top_stations(ranked_gdf, top_n=100, h3_resolution=h3_resolution)
+    print(f"\n🏆 RANKING BY MAXIMUM PROBABILITY:")
+    for i, data in enumerate(comparison_data, 1):
+        print(f"  {i}. {data['Model']:<35} | Max: {data['Max_Probability']:.4f} | Mean: {data['Mean_Probability']:.4f} | Features: {data['Features_Used']}")
     
-    # Export top stations per city if city info is available
-    if 'city' in ranked_gdf.columns:
-        for city in ranked_gdf['city'].unique():
-            export_top_stations(ranked_gdf, top_n=50, h3_resolution=h3_resolution, city=city)
+    # Save comparison summary
+    comparison_df = pd.DataFrame(comparison_data)
+    comparison_file = RANKING_DIR / f"model_comparison_summary_h{h3_resolution}.csv"
+    comparison_df.to_csv(comparison_file, index=False)
+    print(f"\n💾 Comparison summary saved to: {comparison_file}")
     
-    print("\n=== Station Ranking Pipeline Complete ===")
-    print(f"All ranking results saved to {RANKING_DIR}")
-    print(f"Individual city heatmaps saved to {HEATMAPS_DIR}")
+    print(f"\n✅ MULTI-MODEL COMPARISON PIPELINE COMPLETE!")
+    print(f"📁 All results organized in: {RANKING_DIR}")
+    print(f"🎯 Processed {len(model_results)} models successfully")
+    
+    return model_results
+
+def run_ranking_pipeline(h3_resolution=9):
+    """
+    Legacy function for backward compatibility - now runs the multi-model pipeline.
+    """
+    return run_model_comparison_pipeline(h3_resolution)
 
 if __name__ == "__main__":
-    run_ranking_pipeline()
+    run_model_comparison_pipeline()

@@ -1,0 +1,15 @@
+Training Configuration - H3 Resolution 9
+==================================================
+
+Split Method: City-level split
+Training Cities (12): paris, berlin, madrid, stockholm, rome, seoul, singapore, hong_kong, new_york, mexico_city, sao_paulo, buenos_aires
+Test Cities (3): warsaw, toronto, sydney
+
+Overall Model Performance:
+------------------------------
+Accuracy: 0.9790
+Precision: 0.1830
+Recall: 0.3437
+F1: 0.2388
+Roc_auc: 0.9217
+Pr_auc: 0.2166
