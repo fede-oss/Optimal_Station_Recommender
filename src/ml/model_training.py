@@ -9,7 +9,7 @@ import os
 import subprocess
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, roc_auc_score, average_precision_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.tree import export_graphviz
@@ -49,14 +49,27 @@ def load_feature_data():
 
 def prepare_data_for_training(features_gdf):
     """
-    Prepare the feature data for model training.
+    Prepare the feature data for model training using city-level split.
     
     Args:
         features_gdf (gpd.GeoDataFrame): The combined feature data
         
     Returns:
-        tuple: X_train, X_test, y_train, y_test, feature_names
+        tuple: X_train, X_test, y_train, y_test, feature_names, train_cities, test_cities
     """
+    # Define city splits
+    TRAIN_CITIES = [
+        'paris', 'berlin', 'madrid', 'stockholm', 'rome', 
+        'seoul', 'singapore', 'hong_kong', 'new_york', 
+        'mexico_city', 'sao_paulo', 'buenos_aires'
+    ]
+    
+    TEST_CITIES = ['warsaw', 'toronto', 'sydney']
+    
+    print("\n--- CITY-LEVEL TRAIN/TEST SPLIT ---")
+    print(f"Training cities ({len(TRAIN_CITIES)}): {', '.join(TRAIN_CITIES)}")
+    print(f"Testing cities ({len(TEST_CITIES)}): {', '.join(TEST_CITIES)}")
+    
     # First, check if the population column is numeric and convert if necessary
     print("\n--- POPULATION DATA INVESTIGATION ---")
     print(f"Population column data type before conversion: {features_gdf['population'].dtype}")
@@ -79,7 +92,7 @@ def prepare_data_for_training(features_gdf):
     print(f"Population in cells WITHOUT stations: mean={no_station_pop.mean():.2f}, median={no_station_pop.median():.2f}")
     
     # Check if required columns exist
-    required_columns = ['population', 'has_station']
+    required_columns = ['population', 'has_station', 'city']
     # Check for at least one amenity column
     has_amenity_columns = any(col.startswith('count_amenity_') for col in features_gdf.columns)
     if not has_amenity_columns:
@@ -89,32 +102,69 @@ def prepare_data_for_training(features_gdf):
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
     
-    # Drop any rows with NaN values
-    features_gdf = features_gdf.dropna(subset=required_columns)
-    print(f"Using {len(features_gdf)} valid cells after dropping NaN values")
+    # Verify all specified cities exist in the data
+    available_cities = set(features_gdf['city'].unique())
+    missing_train_cities = set(TRAIN_CITIES) - available_cities
+    missing_test_cities = set(TEST_CITIES) - available_cities
     
-    # Select feature columns (excluding geometry, h3_index, and target variable)
+    if missing_train_cities:
+        print(f"Warning: Missing training cities: {missing_train_cities}")
+        TRAIN_CITIES = [city for city in TRAIN_CITIES if city in available_cities]
+    
+    if missing_test_cities:
+        print(f"Warning: Missing test cities: {missing_test_cities}")
+        TEST_CITIES = [city for city in TEST_CITIES if city in available_cities]
+    
+    print(f"Final training cities: {TRAIN_CITIES}")
+    print(f"Final test cities: {TEST_CITIES}")
+    
+    # Split data by cities
+    train_data = features_gdf[features_gdf['city'].isin(TRAIN_CITIES)].copy()
+    test_data = features_gdf[features_gdf['city'].isin(TEST_CITIES)].copy()
+    
+    # Drop any rows with NaN values
+    train_data = train_data.dropna(subset=required_columns)
+    test_data = test_data.dropna(subset=required_columns)
+    
+    print(f"\n--- CITY-LEVEL DATA DISTRIBUTION ---")
+    print(f"Training data: {len(train_data)} cells from {len(TRAIN_CITIES)} cities")
+    print(f"Test data: {len(test_data)} cells from {len(TEST_CITIES)} cities")
+    
+    # Print city-wise statistics
+    print("\nTraining cities distribution:")
+    train_city_stats = train_data.groupby('city').agg({
+        'h3_index': 'count',
+        'has_station': 'sum'
+    }).rename(columns={'h3_index': 'total_cells', 'has_station': 'stations'})
+    train_city_stats['station_density'] = (train_city_stats['stations'] / train_city_stats['total_cells'] * 100).round(2)
+    print(train_city_stats)
+    
+    print("\nTest cities distribution:")
+    test_city_stats = test_data.groupby('city').agg({
+        'h3_index': 'count',
+        'has_station': 'sum'
+    }).rename(columns={'h3_index': 'total_cells', 'has_station': 'stations'})
+    test_city_stats['station_density'] = (test_city_stats['stations'] / test_city_stats['total_cells'] * 100).round(2)
+    print(test_city_stats)
+    
+    # Select feature columns (excluding geometry, h3_index, city, and target variable)
     feature_columns = [col for col in features_gdf.columns 
                       if col not in ['geometry', 'h3_index', 'has_station', 'city']]
     
-    # Print data overview
-    print(f"Feature columns: {feature_columns}")
-    print("Target distribution:")
-    print(features_gdf['has_station'].value_counts())
+    print(f"\nFeature columns ({len(feature_columns)}): {feature_columns}")
     
     # Split into features (X) and target (y)
-    X = features_gdf[feature_columns]
-    y = features_gdf['has_station']
+    X_train = train_data[feature_columns]
+    y_train = train_data['has_station']
+    X_test = test_data[feature_columns]
+    y_test = test_data['has_station']
     
-    # Split into training and testing sets (80/20 split)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    print(f"\nFinal training set: {X_train.shape[0]} samples")
+    print(f"Final test set: {X_test.shape[0]} samples")
+    print(f"Training target distribution:\n{y_train.value_counts()}")
+    print(f"Test target distribution:\n{y_test.value_counts()}")
     
-    print(f"Training set: {X_train.shape[0]} samples")
-    print(f"Testing set: {X_test.shape[0]} samples")
-    
-    return X_train, X_test, y_train, y_test, feature_columns
+    return X_train, X_test, y_train, y_test, feature_columns, TRAIN_CITIES, TEST_CITIES
 
 
 def train_model(X_train, y_train, feature_names):
@@ -131,18 +181,25 @@ def train_model(X_train, y_train, feature_names):
     """
     print("Training Random Forest model with hyperparameter tuning...")
     
-    # Create a pipeline with scaling and Random Forest
+    # Create a pipeline with Random Forest (no scaling needed for tree-based models)
     pipeline = Pipeline([
-        ('scaler', StandardScaler()),
-        ('classifier', RandomForestClassifier(random_state=42))
+        ('classifier', RandomForestClassifier(
+            random_state=42,
+            class_weight='balanced',  # Handle class imbalance automatically
+            n_jobs=-1,  # Use all CPU cores
+            oob_score=True  # Out-of-bag scoring for additional validation
+        ))
     ])
     
-    # Define hyperparameter grid
+    # Enhanced hyperparameter grid for Random Forest
     param_grid = {
-        'classifier__n_estimators': [50, 100, 200, 300],
-        'classifier__max_depth': [None, 10, 20, 30],
+        'classifier__n_estimators': [100, 200, 300],  # Focus on higher values
+        'classifier__max_depth': [None, 15, 25, 35],  # Adjusted range
         'classifier__min_samples_split': [2, 5, 10],
-        'classifier__min_samples_leaf': [1, 2, 4]
+        'classifier__min_samples_leaf': [1, 2, 4],
+        'classifier__max_features': ['sqrt', 'log2', None],  # Feature randomness
+        'classifier__bootstrap': [True, False],  # Sampling strategy
+        'classifier__criterion': ['gini', 'entropy']  # Split quality measure
     }
     
     # Use GridSearchCV for hyperparameter tuning
@@ -163,15 +220,19 @@ def train_model(X_train, y_train, feature_names):
     print(f"Best parameters: {grid_search.best_params_}")
     print(f"Best cross-validation F1 score: {grid_search.best_score_:.4f}")
     
-    # Get feature importances
+    # Random Forest specific information
     rf_model = best_model.named_steps['classifier']
+    if hasattr(rf_model, 'oob_score_'):
+        print(f"Out-of-bag score: {rf_model.oob_score_:.4f}")
+    
+    # Get feature importances
     feature_importances = pd.DataFrame({
         'Feature': feature_names,
         'Importance': rf_model.feature_importances_
     }).sort_values('Importance', ascending=False)
     
-    print("\nFeature Importances:")
-    print(feature_importances)
+    print("\nTop 10 Feature Importances:")
+    print(feature_importances.head(10))
     
     return best_model, grid_search, feature_importances
 
@@ -192,18 +253,32 @@ def evaluate_model(model, X_test, y_test):
     
     # Make predictions
     y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]  # Probabilities for positive class
     
-    # Calculate metrics
+    # Calculate comprehensive metrics for imbalanced classification
     metrics = {
         'accuracy': accuracy_score(y_test, y_pred),
         'precision': precision_score(y_test, y_pred, zero_division=0),
         'recall': recall_score(y_test, y_pred),
-        'f1': f1_score(y_test, y_pred)
+        'f1': f1_score(y_test, y_pred),
+        'roc_auc': roc_auc_score(y_test, y_pred_proba),
+        'pr_auc': average_precision_score(y_test, y_pred_proba)  # Precision-Recall AUC
     }
     
-    # Print metrics
-    for metric_name, metric_value in metrics.items():
-        print(f"{metric_name.capitalize()}: {metric_value:.4f}")
+    # Print metrics with better formatting for imbalanced data
+    print("\n=== MODEL PERFORMANCE METRICS ===")
+    print(f"Accuracy:     {metrics['accuracy']:.4f}")
+    print(f"Precision:    {metrics['precision']:.4f}")
+    print(f"Recall:       {metrics['recall']:.4f}")
+    print(f"F1-Score:     {metrics['f1']:.4f}")
+    print(f"ROC-AUC:      {metrics['roc_auc']:.4f}")
+    print(f"PR-AUC:       {metrics['pr_auc']:.4f} (better for imbalanced data)")
+    
+    # Additional context for imbalanced classification
+    positive_rate = y_test.mean()
+    print(f"\nClass distribution in test set:")
+    print(f"Positive class rate: {positive_rate:.3f} ({positive_rate*100:.1f}%)")
+    print(f"Negative class rate: {1-positive_rate:.3f} ({(1-positive_rate)*100:.1f}%)")
     
     # Confusion matrix
     cm = confusion_matrix(y_test, y_pred)
@@ -217,7 +292,7 @@ def evaluate_model(model, X_test, y_test):
     return metrics, y_pred
 
 
-def save_results(model, feature_importances, metrics, X_test, y_test, y_pred):
+def save_results(model, feature_importances, metrics, X_test, y_test, y_pred, train_cities=None, test_cities=None, city_metrics=None):
     """
     Save the model, feature importances, and evaluation results.
     
@@ -228,6 +303,9 @@ def save_results(model, feature_importances, metrics, X_test, y_test, y_pred):
         X_test (pd.DataFrame): Test features
         y_test (pd.Series): Test target
         y_pred (np.array): Predicted values
+        train_cities (list, optional): List of training cities
+        test_cities (list, optional): List of test cities  
+        city_metrics (dict, optional): City-specific evaluation metrics
     """
     # Save model
     model_file = MODELS_DIR / f"station_recommender_h{H3_RESOLUTION}.joblib"
@@ -243,6 +321,29 @@ def save_results(model, feature_importances, metrics, X_test, y_test, y_pred):
     metrics_file = RESULTS_DIR / f"evaluation_metrics_h{H3_RESOLUTION}.csv"
     pd.DataFrame([metrics]).to_csv(metrics_file, index=False)
     print(f"Evaluation metrics saved to {metrics_file}")
+    
+    # Save city-specific metrics if provided
+    if city_metrics and test_cities:
+        city_metrics_file = RESULTS_DIR / f"city_metrics_h{H3_RESOLUTION}.csv"
+        city_metrics_df = pd.DataFrame.from_dict(city_metrics, orient='index')
+        city_metrics_df.index.name = 'city'
+        city_metrics_df.to_csv(city_metrics_file)
+        print(f"City-specific metrics saved to {city_metrics_file}")
+    
+    # Save training configuration if provided
+    if train_cities and test_cities:
+        config_file = RESULTS_DIR / f"training_config_h{H3_RESOLUTION}.txt"
+        with open(config_file, 'w') as f:
+            f.write(f"Training Configuration - H3 Resolution {H3_RESOLUTION}\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(f"Split Method: City-level split\n")
+            f.write(f"Training Cities ({len(train_cities)}): {', '.join(train_cities)}\n")
+            f.write(f"Test Cities ({len(test_cities)}): {', '.join(test_cities)}\n\n")
+            f.write("Overall Model Performance:\n")
+            f.write("-" * 30 + "\n")
+            for metric, value in metrics.items():
+                f.write(f"{metric.capitalize()}: {value:.4f}\n")
+        print(f"Training configuration saved to {config_file}")
     
     # Create feature importance plot
     plt.figure(figsize=(10, 6))
@@ -369,15 +470,15 @@ def save_results(model, feature_importances, metrics, X_test, y_test, y_pred):
 
 def run_model_training_pipeline():
     """
-    Run the complete model training pipeline.
+    Run the complete model training pipeline with city-level evaluation.
     """
     print("=== Starting Model Training Pipeline ===")
     
     # Load data
     features_gdf = load_feature_data()
     
-    # Prepare data
-    X_train, X_test, y_train, y_test, feature_names = prepare_data_for_training(features_gdf)
+    # Prepare data with city-level split
+    X_train, X_test, y_train, y_test, feature_names, train_cities, test_cities = prepare_data_for_training(features_gdf)
     
     # Train model
     model, grid_search, feature_importances = train_model(X_train, y_train, feature_names)
@@ -385,10 +486,46 @@ def run_model_training_pipeline():
     # Evaluate model
     metrics, y_pred = evaluate_model(model, X_test, y_test)
     
-    # Save results
-    save_results(model, feature_importances, metrics, X_test, y_test, y_pred)
+    # Additional city-specific evaluation
+    print("\n=== CITY-SPECIFIC EVALUATION ===")
+    test_data = features_gdf[features_gdf['city'].isin(test_cities)].copy()
+    test_data = test_data.dropna(subset=['population', 'has_station', 'city'])
+    
+    city_metrics = {}
+    for city in test_cities:
+        city_data = test_data[test_data['city'] == city]
+        if len(city_data) > 0:
+            X_city = city_data[feature_names]
+            y_city = city_data['has_station']
+            
+            y_city_pred = model.predict(X_city)
+            y_city_proba = model.predict_proba(X_city)[:, 1]
+            
+            city_metrics[city] = {
+                'accuracy': accuracy_score(y_city, y_city_pred),
+                'precision': precision_score(y_city, y_city_pred, zero_division=0),
+                'recall': recall_score(y_city, y_city_pred, zero_division=0),
+                'f1': f1_score(y_city, y_city_pred, zero_division=0),
+                'samples': len(city_data),
+                'stations': y_city.sum(),
+                'avg_probability': y_city_proba.mean()
+            }
+            
+            print(f"\n{city.upper()} Performance:")
+            print(f"  Samples: {city_metrics[city]['samples']:,}")
+            print(f"  Stations: {city_metrics[city]['stations']:,}")
+            print(f"  Accuracy: {city_metrics[city]['accuracy']:.3f}")
+            print(f"  Precision: {city_metrics[city]['precision']:.3f}")
+            print(f"  Recall: {city_metrics[city]['recall']:.3f}")
+            print(f"  F1-Score: {city_metrics[city]['f1']:.3f}")
+            print(f"  Avg Probability: {city_metrics[city]['avg_probability']:.3f}")
+    
+    # Save results with city information
+    save_results(model, feature_importances, metrics, X_test, y_test, y_pred, train_cities, test_cities, city_metrics)
     
     print("\n=== Model Training Pipeline Complete ===")
+    print(f"Training cities: {', '.join(train_cities)}")
+    print(f"Test cities: {', '.join(test_cities)}")
     
     return model
 
