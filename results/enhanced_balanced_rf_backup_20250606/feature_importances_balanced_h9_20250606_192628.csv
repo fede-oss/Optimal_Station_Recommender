@@ -1,0 +1,13 @@
+Feature,Importance
+count_amenity_transportation,0.44227120273781817
+count_amenity_shopping_food,0.23872439777630522
+population,0.20666191952374918
+count_amenity_public_services,0.03164046202991346
+count_amenity_healthcare,0.027467916716007693
+count_amenity_leisure_recreation,0.012646646392196306
+count_amenity_education,0.009318646052799895
+count_amenity_workplaces,0.007403285905012843
+count_amenity_tourism,0.006911119725353785
+count_amenity_entertainment,0.00668950960754611
+count_amenity_religious,0.005172512253764257
+count_amenity_accommodation,0.005092381279533164
