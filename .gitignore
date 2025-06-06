@@ -1,3 +1,13 @@
 #ignore the datasets for the git push
 data/
 cache/
+
+# Ignore large result files (>100MB)
+# Interactive HTML maps (can be very large)
+results/**/interactive_maps/*.html
+
+# Large geopackage files
+results/**/*.gpkg
+
+# Git pack files
+.git/objects/pack/*.pack
