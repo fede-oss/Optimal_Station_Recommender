@@ -2,12 +2,9 @@
 data/
 cache/
 
-# Ignore large result files (>100MB)
-# Interactive HTML maps (can be very large)
-results/**/interactive_maps/*.html
-
-# Large geopackage files
-results/**/*.gpkg
+# Large geopackage files (tracked by Git LFS)
+# Note: *.gpkg files are tracked by Git LFS via .gitattributes
+# results/**/*.gpkg
 
 # Git pack files
 .git/objects/pack/*.pack
