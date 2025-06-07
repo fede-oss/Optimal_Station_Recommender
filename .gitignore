@@ -2,9 +2,18 @@
 data/
 cache/
 
-# Large geopackage files (tracked by Git LFS)
-# Note: *.gpkg files are tracked by Git LFS via .gitattributes
-# results/**/*.gpkg
+# Large files - no longer using LFS, keeping local only
+*.gpkg
+*.joblib
+results/rankings/*/interactive_maps/*.html
+results/rankings/*/station_rankings/*.gpkg
+models/*.joblib
+results/**/*.joblib
+results/rankings/*/*.gpkg
+
+# Additional large file patterns
+*.tif
+*.geojson
 
 # Git pack files
 .git/objects/pack/*.pack

@@ -1,7 +1,9 @@
-*.gpkg filter=lfs diff=lfs merge=lfs -text
-*.joblib filter=lfs diff=lfs merge=lfs -text
-results/rankings/*/interactive_maps/*.html filter=lfs diff=lfs merge=lfs -text
-results/rankings/*/station_rankings/*.gpkg filter=lfs diff=lfs merge=lfs -text
-models/*.joblib filter=lfs diff=lfs merge=lfs -text
-results/**/*.joblib filter=lfs diff=lfs merge=lfs -text
-results/rankings/*/*.gpkg filter=lfs diff=lfs merge=lfs -text
+# LFS tracking removed - these files are now in .gitignore
+# Previously tracked by LFS:
+# *.gpkg filter=lfs diff=lfs merge=lfs -text
+# *.joblib filter=lfs diff=lfs merge=lfs -text
+# results/rankings/*/interactive_maps/*.html filter=lfs diff=lfs merge=lfs -text
+# results/rankings/*/station_rankings/*.gpkg filter=lfs diff=lfs merge=lfs -text
+# models/*.joblib filter=lfs diff=lfs merge=lfs -text
+# results/**/*.joblib filter=lfs diff=lfs merge=lfs -text
+# results/rankings/*/*.gpkg filter=lfs diff=lfs merge=lfs -text
