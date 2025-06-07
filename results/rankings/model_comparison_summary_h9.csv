@@ -1,4 +1,4 @@
 Model,Max_Probability,Mean_Probability,Std_Probability,Features_Used,Results_Directory
-station_recommender_h9_17_cities_enhanced,0.9986118671747414,0.10435539259096141,0.21099510587996234,12,/Users/fede/Library/Mobile Documents/com~apple~CloudDocs/KU/Data Science/Optimal_Station_Recommender/results/rankings/station_recommender_h9_17_cities_enhanced
-station_recommender_h9_17_cities,0.9947162973758353,0.025280524400039844,0.0967333667081278,12,/Users/fede/Library/Mobile Documents/com~apple~CloudDocs/KU/Data Science/Optimal_Station_Recommender/results/rankings/station_recommender_h9_17_cities
+station_recommender_h9_15_cities_enhanced,0.9986118671747414,0.10435539259096141,0.21099510587996234,12,/Users/fede/Library/Mobile Documents/com~apple~CloudDocs/KU/Data Science/Optimal_Station_Recommender/results/rankings/station_recommender_h9_15_cities_enhanced
+station_recommender_h9_15_cities,0.9947162973758353,0.025280524400039844,0.0967333667081278,12,/Users/fede/Library/Mobile Documents/com~apple~CloudDocs/KU/Data Science/Optimal_Station_Recommender/results/rankings/station_recommender_h9_15_cities
 station_recommender_h9_3_cities,0.97,0.01422596465782075,0.06729069299051126,7,/Users/fede/Library/Mobile Documents/com~apple~CloudDocs/KU/Data Science/Optimal_Station_Recommender/results/rankings/station_recommender_h9_3_cities

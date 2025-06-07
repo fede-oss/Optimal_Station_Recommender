@@ -5,7 +5,7 @@ This folder contains backup results from the previous Random Forest model traini
 ## Model Configuration (OLD)
 - **Training Date**: June 1, 2024
 - **Split Method**: Random 80/20 split across all cities
-- **Cities**: All 17 cities mixed together
+- **Cities**: All 15 cities mixed together
 - **Features**: 7 amenity categories + population
 - **Total Hexagons**: ~473k
 - **H3 Resolution**: 9
